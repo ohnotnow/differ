@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+install_root="${DIFFER_INSTALL_ROOT:-"$HOME/.local/share/differ"}"
+bin_dir="${DIFFER_BIN_DIR:-"$HOME/.local/bin"}"
+
+cd "$repo_root"
+
+npm run build:web
+swift build -c release --product Differ
+
+build_dir="$(swift build -c release --show-bin-path)"
+bundle_name="Differ_Differ.bundle"
+
+mkdir -p "$install_root" "$bin_dir"
+install -m 755 "$build_dir/Differ" "$install_root/Differ"
+rm -rf "$install_root/$bundle_name"
+cp -R "$build_dir/$bundle_name" "$install_root/$bundle_name"
+
+app_binary_literal="$(printf "%q" "$install_root/Differ")"
+launcher="$bin_dir/differ"
+
+cat > "$launcher" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_binary=$app_binary_literal
+raw_path="\${1:-.}"
+
+if [[ -d "\$raw_path" ]]; then
+  repo_path="\$(cd "\$raw_path" && pwd -P)"
+else
+  parent="\$(dirname "\$raw_path")"
+  basename="\$(basename "\$raw_path")"
+  if [[ -d "\$parent" ]]; then
+    repo_path="\$(cd "\$parent" && pwd -P)/\$basename"
+  else
+    repo_path="\$raw_path"
+  fi
+fi
+
+nohup "\$app_binary" "\$repo_path" >/dev/null 2>&1 &
+EOF
+
+chmod 755 "$launcher"
+
+cat <<EOF
+Installed Differ to:
+  $install_root
+
+Installed launcher:
+  $launcher
+
+Run:
+  differ .
+EOF

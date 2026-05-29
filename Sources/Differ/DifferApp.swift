@@ -7,6 +7,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static var delegateReference: DifferApp?
 
     private let appState = AppState()
+    private let launchOptions = LaunchOptions.current()
     private var window: NSWindow?
 
     static func main() {
@@ -23,6 +24,12 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installMainMenu()
         showMainWindow()
         NSApp.activate()
+
+        if let repositoryURL = launchOptions.repositoryURL {
+            Task {
+                await appState.openRepository(repositoryURL)
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
