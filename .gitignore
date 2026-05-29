@@ -7,3 +7,7 @@ DerivedData/
 .ant/
 PLAN.md
 test.txt
+
+# Generated WKWebView bundle. Rebuild locally with npm run build:web.
+Sources/Differ/Resources/Web/*
+!Sources/Differ/Resources/Web/.gitkeep
