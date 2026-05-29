@@ -88,6 +88,7 @@ let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
 let uiZoomPercent = defaultZoomPercent;
+let zoomReflowFrame: number | null = null;
 
 function render() {
   changeCount.textContent = hasNativeSnapshot
@@ -275,6 +276,7 @@ function renderTree() {
       paths: snapshot.files.map((file) => file.path),
       initialExpansion: "open",
       initialSelectedPaths: selectedPath ? [selectedPath] : [],
+      itemHeight: treeItemHeight(),
       gitStatus: gitStatusEntries(),
       icons: { set: "minimal", colored: false },
       renderRowDecoration({ item }) {
@@ -586,6 +588,7 @@ function postNative(message: NativeMessage) {
 
 function setUiZoomPercent(percent: number, notifyNative = true) {
   const nextZoomPercent = clampZoomPercent(percent);
+  const didChange = nextZoomPercent !== uiZoomPercent;
 
   uiZoomPercent = nextZoomPercent;
   document.documentElement.style.setProperty("--ui-scale", `${nextZoomPercent / 100}`);
@@ -593,9 +596,61 @@ function setUiZoomPercent(percent: number, notifyNative = true) {
   zoomOut.disabled = nextZoomPercent <= minimumZoomPercent;
   zoomIn.disabled = nextZoomPercent >= maximumZoomPercent;
 
+  if (didChange) {
+    scheduleZoomReflow();
+  }
+
   if (notifyNative) {
     postNative({ type: "set-ui-zoom", percent: nextZoomPercent });
   }
+}
+
+function scheduleZoomReflow() {
+  if (zoomReflowFrame !== null) {
+    window.cancelAnimationFrame(zoomReflowFrame);
+  }
+
+  const scrollProgress = diffScrollProgress();
+  zoomReflowFrame = window.requestAnimationFrame(() => {
+    zoomReflowFrame = null;
+    rebuildTreeForZoom();
+    renderDiff(currentDiffFiles);
+
+    window.requestAnimationFrame(() => {
+      restoreDiffScrollProgress(scrollProgress);
+    });
+  });
+}
+
+function rebuildTreeForZoom() {
+  if (!tree) {
+    return;
+  }
+
+  tree.cleanUp();
+  tree = null;
+  renderedTreeDataKey = null;
+  treeHost.replaceChildren();
+  renderTree();
+}
+
+function treeItemHeight() {
+  return Math.round(30 * (uiZoomPercent / 100));
+}
+
+function diffScrollProgress() {
+  const scrollRange = diffHost.scrollHeight - diffHost.clientHeight;
+
+  if (scrollRange <= 0) {
+    return 0;
+  }
+
+  return diffHost.scrollTop / scrollRange;
+}
+
+function restoreDiffScrollProgress(progress: number) {
+  const scrollRange = diffHost.scrollHeight - diffHost.clientHeight;
+  diffHost.scrollTop = scrollRange <= 0 ? 0 : progress * scrollRange;
 }
 
 function clampZoomPercent(percent: number) {
@@ -633,6 +688,10 @@ zoomOut.addEventListener("click", () => {
 
 zoomIn.addEventListener("click", () => {
   setUiZoomPercent(uiZoomPercent + zoomStepPercent);
+});
+
+zoomSelect.addEventListener("input", () => {
+  setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
 });
 
 zoomSelect.addEventListener("change", () => {
