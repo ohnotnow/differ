@@ -70,6 +70,9 @@ let allDiffFiles: FileDiffMetadata[] = [];
 let currentDiffFiles = allDiffFiles;
 
 let tree: FileTree | null = null;
+let renderedFileListKey: string | null = null;
+const fileRowCache = new Map<string, HTMLButtonElement>();
+const focusedPatchCache = new Map<string, FileDiffMetadata[]>();
 let syncingTreeSelection = false;
 let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
@@ -87,40 +90,130 @@ function render() {
 }
 
 function renderFallbackFiles() {
-  fallbackFiles.replaceChildren();
-
   if (!hasNativeSnapshot || snapshot.files.length === 0) {
+    clearFallbackFiles();
     return;
   }
 
-  fallbackFiles.append(fileButton({ path: "All changes", status: "mixed" }, selectedPath === null, () => selectAllChanges()));
+  const nextFileListKey = fileListKey();
+  const needsStructureSync = renderedFileListKey !== nextFileListKey;
+
+  if (needsStructureSync) {
+    const retainedKeys = new Set(["__all__", ...snapshot.files.map((file) => file.path)]);
+
+    for (const [key, button] of fileRowCache) {
+      if (!retainedKeys.has(key)) {
+        button.remove();
+        fileRowCache.delete(key);
+      }
+    }
+  }
+
+  if (needsStructureSync) {
+    const fragment = document.createDocumentFragment();
+    fragment.append(buttonForFileRow("__all__", { path: "All changes", status: "mixed" }, selectedPath === null));
+
+    for (const file of snapshot.files) {
+      fragment.append(buttonForFileRow(file.path, file, selectedPath === file.path));
+    }
+
+    const scrollTop = fallbackFiles.scrollTop;
+    fallbackFiles.append(fragment);
+    fallbackFiles.scrollTop = scrollTop;
+    renderedFileListKey = nextFileListKey;
+    return;
+  }
+
+  const allChangesRow = fileRowCache.get("__all__");
+  if (allChangesRow) {
+    updateFileButton(allChangesRow, { path: "All changes", status: "mixed" }, selectedPath === null);
+  }
 
   for (const file of snapshot.files) {
-    fallbackFiles.append(fileButton(file, selectedPath === file.path, () => selectPath(file.path)));
+    const button = fileRowCache.get(file.path);
+    if (button) {
+      updateFileButton(button, file, selectedPath === file.path);
+    }
   }
+  syncFileRowSelection();
 }
 
-function fileButton(file: Pick<ChangedFile, "path" | "status">, selected: boolean, onClick: () => void) {
+function fileListKey() {
+  return snapshot.files
+    .map((file) => `${file.path}\0${file.oldPath ?? ""}\0${file.status}\0${file.indexStatus}\0${file.workTreeStatus}`)
+    .join("\n");
+}
+
+function clearFallbackFiles() {
+  fileRowCache.clear();
+  renderedFileListKey = null;
+  fallbackFiles.replaceChildren();
+}
+
+function buttonForFileRow(key: string, file: Pick<ChangedFile, "path" | "status">, selected: boolean) {
+  let button = fileRowCache.get(key);
+
+  if (!button) {
+    button = createFileButton(file, () => {
+      if (key === "__all__") {
+        selectAllChanges();
+        return;
+      }
+
+      selectPath(key);
+    });
+    fileRowCache.set(key, button);
+  }
+
+  updateFileButton(button, file, selected);
+  return button;
+}
+
+function createFileButton(file: Pick<ChangedFile, "path" | "status">, onClick: () => void) {
   const button = document.createElement("button");
-  button.className = selected ? "file-row selected" : "file-row";
+  button.className = "file-row";
   button.type = "button";
-  button.title = file.path === "All changes" ? "All changed files" : `${statusTitle(file.status)}: ${file.path}`;
-  button.setAttribute("aria-label", button.title);
   button.addEventListener("click", onClick);
 
   const badge = document.createElement("span");
-  badge.className = `status-badge ${file.status}`;
-  badge.textContent = statusLabel(file.status);
-  badge.title = statusTitle(file.status);
-  badge.setAttribute("aria-label", statusTitle(file.status));
+  badge.className = "status-badge";
 
   const path = document.createElement("span");
   path.className = "file-path";
-  path.textContent = file.path;
-  path.title = file.path;
 
   button.append(badge, path);
+  updateFileButton(button, file, false);
   return button;
+}
+
+function updateFileButton(button: HTMLButtonElement, file: Pick<ChangedFile, "path" | "status">, selected: boolean) {
+  const title = file.path === "All changes" ? "All changed files" : `${statusTitle(file.status)}: ${file.path}`;
+  const badge = button.querySelector<HTMLElement>(".status-badge");
+  const path = button.querySelector<HTMLElement>(".file-path");
+
+  button.classList.toggle("selected", selected);
+  button.title = title;
+  button.setAttribute("aria-label", title);
+
+  if (badge) {
+    badge.className = `status-badge ${file.status}`;
+    badge.textContent = statusLabel(file.status);
+    badge.title = statusTitle(file.status);
+    badge.setAttribute("aria-label", statusTitle(file.status));
+  }
+
+  if (path) {
+    path.textContent = file.path;
+    path.title = file.path;
+  }
+}
+
+function syncFileRowSelection() {
+  fileRowCache.get("__all__")?.classList.toggle("selected", selectedPath === null);
+
+  for (const file of snapshot.files) {
+    fileRowCache.get(file.path)?.classList.toggle("selected", selectedPath === file.path);
+  }
 }
 
 function selectAllChanges(notifyNative = true) {
@@ -142,12 +235,16 @@ function selectPath(path: string, notifyNative = true) {
   }
 
   selectedPath = path;
-  currentDiffFiles = allDiffFiles.filter((fileDiff) => diffMatchesChangedFile(fileDiff, file));
+  currentDiffFiles = focusedPatchCache.get(path) ?? diffFilesForChangedFile(file);
   if (notifyNative) {
     postNative({ type: "select-file", path });
   }
 
   render();
+}
+
+function diffFilesForChangedFile(file: ChangedFile) {
+  return allDiffFiles.filter((fileDiff) => diffMatchesChangedFile(fileDiff, file));
 }
 
 function renderTree() {
@@ -378,6 +475,14 @@ function patchFiles(patch: string): FileDiffMetadata[] {
   }
 }
 
+function diffFilesSignature(fileDiffs: FileDiffMetadata[]) {
+  try {
+    return JSON.stringify(fileDiffs);
+  } catch {
+    return fileDiffs.map((fileDiff) => `${fileDiff.prevName ?? ""}\0${fileDiff.name ?? ""}`).join("\n");
+  }
+}
+
 function diffMatchesChangedFile(fileDiff: FileDiffMetadata, file: ChangedFile) {
   const diffPaths = [fileDiff.name, fileDiff.prevName].flatMap((path) => normalizedDiffPath(path));
   const filePaths = [file.path, file.oldPath].flatMap((path) => normalizedDiffPath(path));
@@ -492,12 +597,21 @@ refreshInterval.addEventListener("change", () => {
 window.Differ = {
   applySnapshot(nextSnapshot) {
     const previousPath = selectedPath;
+    const previousFocusedDiff = previousPath ? focusedPatchCache.get(previousPath) : undefined;
+
+    focusedPatchCache.clear();
     hasNativeSnapshot = true;
     snapshot = nextSnapshot;
     allDiffFiles = patchFiles(nextSnapshot.allPatch);
 
-    if (previousPath && fileForPath(previousPath)) {
-      selectPath(previousPath, false);
+    const previousFile = previousPath ? fileForPath(previousPath) : undefined;
+    if (previousPath && previousFile) {
+      const nextGlobalDiff = diffFilesForChangedFile(previousFile);
+      if (previousFocusedDiff && nextGlobalDiff.length === 0) {
+        focusedPatchCache.set(previousPath, previousFocusedDiff);
+      }
+
+      selectPath(previousPath, true);
     } else {
       selectAllChanges(false);
     }
@@ -507,9 +621,16 @@ window.Differ = {
       return;
     }
 
+    const nextDiffFiles = patchFiles(patch);
+    focusedPatchCache.set(path, nextDiffFiles);
+
+    if (diffFilesSignature(currentDiffFiles) === diffFilesSignature(nextDiffFiles)) {
+      return;
+    }
+
     selectedPath = path;
-    currentDiffFiles = patchFiles(patch);
-    render();
+    currentDiffFiles = nextDiffFiles;
+    renderDiff(currentDiffFiles);
   },
   applyPreferences(preferences) {
     refreshInterval.value = `${preferences.refreshIntervalMilliseconds}`;
