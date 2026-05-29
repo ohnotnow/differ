@@ -223,8 +223,7 @@ h1 {
 
 select,
 .button,
-.icon-button,
-.zoom-value {
+.icon-button {
   min-height: var(--control-height);
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -240,27 +239,23 @@ select {
   padding: 5px 10px;
 }
 
-.icon-button,
-.zoom-value {
+.icon-button {
   display: inline-grid;
   place-items: center;
   height: var(--control-height);
-  padding: 0;
-}
-
-.icon-button {
   width: var(--control-height);
+  padding: 0;
   font-weight: 800;
 }
 
-.zoom-value {
-  min-width: calc(52px * var(--ui-scale));
+.zoom-select {
+  min-width: calc(78px * var(--ui-scale));
   font-weight: 700;
 }
 
 .button:hover,
 .icon-button:hover,
-.zoom-value:hover {
+.zoom-select:hover {
   border-color: rgba(118, 166, 184, 0.6);
   background: #2e343d;
 }

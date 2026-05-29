@@ -7,6 +7,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static var delegateReference: DifferApp?
 
     private let appState = AppState()
+    private let defaults = UserDefaults.standard
     private let launchOptions = LaunchOptions.current()
     private var window: NSWindow?
 
@@ -34,6 +35,18 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func windowDidMove(_ notification: Notification) {
+        saveMainWindowFrame(from: notification)
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        saveMainWindowFrame(from: notification)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        saveMainWindowFrame(from: notification)
     }
 
     @objc private func openRepositoryFromMenu() {
@@ -71,6 +84,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let rootView = ContentView()
             .environmentObject(appState)
 
+        let restoredFrame = restoredMainWindowFrame()
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -79,10 +93,12 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         window.title = "Differ"
-        window.center()
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: rootView)
+        let targetFrame = restoredFrame ?? defaultMainWindowFrame()
+        window.setFrame(targetFrame, display: false)
         window.makeKeyAndOrderFront(nil)
+        window.setFrame(targetFrame, display: true)
 
         self.window = window
     }
@@ -144,4 +160,48 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         NSApp.mainMenu = mainMenu
     }
+
+    private func saveMainWindowFrame(from notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === self.window,
+              window.isMiniaturized == false
+        else {
+            return
+        }
+
+        defaults.set(NSStringFromRect(window.frame), forKey: DefaultsKey.mainWindowFrame)
+    }
+
+    private func restoredMainWindowFrame() -> NSRect? {
+        guard let frameString = defaults.string(forKey: DefaultsKey.mainWindowFrame) else {
+            return nil
+        }
+
+        let frame = NSRectFromString(frameString)
+        guard frame.width > 0,
+              frame.height > 0,
+              NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) })
+        else {
+            return nil
+        }
+
+        return frame
+    }
+
+    private func defaultMainWindowFrame() -> NSRect {
+        let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1180, height: 760)
+        let width = min(1180, visibleFrame.width)
+        let height = min(760, visibleFrame.height)
+
+        return NSRect(
+            x: visibleFrame.midX - width / 2,
+            y: visibleFrame.midY - height / 2,
+            width: width,
+            height: height
+        ).integral
+    }
+}
+
+private enum DefaultsKey {
+    static let mainWindowFrame = "mainWindowFrame"
 }

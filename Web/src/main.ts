@@ -59,7 +59,7 @@ const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
 const zoomIn = mustFind<HTMLButtonElement>("#zoom-in");
 const zoomOut = mustFind<HTMLButtonElement>("#zoom-out");
-const zoomReset = mustFind<HTMLButtonElement>("#zoom-reset");
+const zoomSelect = mustFind<HTMLSelectElement>("#zoom-select");
 
 const defaultZoomPercent = 100;
 const minimumZoomPercent = 80;
@@ -589,7 +589,7 @@ function setUiZoomPercent(percent: number, notifyNative = true) {
 
   uiZoomPercent = nextZoomPercent;
   document.documentElement.style.setProperty("--ui-scale", `${nextZoomPercent / 100}`);
-  zoomReset.textContent = `${nextZoomPercent}%`;
+  zoomSelect.value = `${nextZoomPercent}`;
   zoomOut.disabled = nextZoomPercent <= minimumZoomPercent;
   zoomIn.disabled = nextZoomPercent >= maximumZoomPercent;
 
@@ -635,8 +635,8 @@ zoomIn.addEventListener("click", () => {
   setUiZoomPercent(uiZoomPercent + zoomStepPercent);
 });
 
-zoomReset.addEventListener("click", () => {
-  setUiZoomPercent(defaultZoomPercent);
+zoomSelect.addEventListener("change", () => {
+  setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
 });
 
 window.addEventListener("keydown", (event) => {
