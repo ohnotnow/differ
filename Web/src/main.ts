@@ -22,6 +22,7 @@ type DifferSnapshot = {
 
 type DifferPreferences = {
   refreshIntervalMilliseconds: number;
+  uiZoomPercent: number;
 };
 
 type NativeMessage =
@@ -29,6 +30,7 @@ type NativeMessage =
   | { type: "select-all" }
   | { type: "manual-refresh" }
   | { type: "set-refresh-interval"; milliseconds: number }
+  | { type: "set-ui-zoom"; percent: number }
   | { type: "web-ready" };
 
 declare global {
@@ -55,6 +57,14 @@ const selectionTitle = mustFind<HTMLElement>("#selection-title");
 const manualRefresh = mustFind<HTMLButtonElement>("#manual-refresh");
 const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
+const zoomIn = mustFind<HTMLButtonElement>("#zoom-in");
+const zoomOut = mustFind<HTMLButtonElement>("#zoom-out");
+const zoomReset = mustFind<HTMLButtonElement>("#zoom-reset");
+
+const defaultZoomPercent = 100;
+const minimumZoomPercent = 80;
+const maximumZoomPercent = 180;
+const zoomStepPercent = 10;
 
 const emptySnapshot: DifferSnapshot = {
   repositoryPath: "",
@@ -77,6 +87,7 @@ let syncingTreeSelection = false;
 let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
+let uiZoomPercent = defaultZoomPercent;
 
 function render() {
   changeCount.textContent = hasNativeSnapshot
@@ -573,6 +584,28 @@ function postNative(message: NativeMessage) {
   window.webkit?.messageHandlers?.differ?.postMessage(message);
 }
 
+function setUiZoomPercent(percent: number, notifyNative = true) {
+  const nextZoomPercent = clampZoomPercent(percent);
+
+  uiZoomPercent = nextZoomPercent;
+  document.documentElement.style.setProperty("--ui-scale", `${nextZoomPercent / 100}`);
+  zoomReset.textContent = `${nextZoomPercent}%`;
+  zoomOut.disabled = nextZoomPercent <= minimumZoomPercent;
+  zoomIn.disabled = nextZoomPercent >= maximumZoomPercent;
+
+  if (notifyNative) {
+    postNative({ type: "set-ui-zoom", percent: nextZoomPercent });
+  }
+}
+
+function clampZoomPercent(percent: number) {
+  if (!Number.isFinite(percent)) {
+    return defaultZoomPercent;
+  }
+
+  return Math.min(maximumZoomPercent, Math.max(minimumZoomPercent, Math.round(percent / zoomStepPercent) * zoomStepPercent));
+}
+
 function mustFind<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
 
@@ -592,6 +625,41 @@ refreshInterval.addEventListener("change", () => {
     type: "set-refresh-interval",
     milliseconds: Number.parseInt(refreshInterval.value, 10),
   });
+});
+
+zoomOut.addEventListener("click", () => {
+  setUiZoomPercent(uiZoomPercent - zoomStepPercent);
+});
+
+zoomIn.addEventListener("click", () => {
+  setUiZoomPercent(uiZoomPercent + zoomStepPercent);
+});
+
+zoomReset.addEventListener("click", () => {
+  setUiZoomPercent(defaultZoomPercent);
+});
+
+window.addEventListener("keydown", (event) => {
+  if (!event.metaKey && !event.ctrlKey) {
+    return;
+  }
+
+  if (event.key === "+" || event.key === "=") {
+    event.preventDefault();
+    setUiZoomPercent(uiZoomPercent + zoomStepPercent);
+    return;
+  }
+
+  if (event.key === "-") {
+    event.preventDefault();
+    setUiZoomPercent(uiZoomPercent - zoomStepPercent);
+    return;
+  }
+
+  if (event.key === "0") {
+    event.preventDefault();
+    setUiZoomPercent(defaultZoomPercent);
+  }
 });
 
 window.Differ = {
@@ -634,8 +702,10 @@ window.Differ = {
   },
   applyPreferences(preferences) {
     refreshInterval.value = `${preferences.refreshIntervalMilliseconds}`;
+    setUiZoomPercent(preferences.uiZoomPercent, false);
   },
 };
 
+setUiZoomPercent(defaultZoomPercent, false);
 render();
 postNative({ type: "web-ready" });

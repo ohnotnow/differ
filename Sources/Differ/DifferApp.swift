@@ -46,6 +46,18 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    @objc private func zoomIn() {
+        appState.setUiZoomPercent(appState.uiZoomPercent + 10)
+    }
+
+    @objc private func zoomOut() {
+        appState.setUiZoomPercent(appState.uiZoomPercent - 10)
+    }
+
+    @objc private func resetZoom() {
+        appState.setUiZoomPercent(100)
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -80,27 +92,55 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let appMenuItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(
-            NSMenuItem(
-                title: "Quit Differ",
-                action: #selector(quit),
-                keyEquivalent: "q"
-            )
+        let quitItem = NSMenuItem(
+            title: "Quit Differ",
+            action: #selector(quit),
+            keyEquivalent: "q"
         )
-        appMenuItem.submenu = appMenu
+        quitItem.target = self
+        appMenu.addItem(quitItem)
         mainMenu.addItem(appMenuItem)
+        appMenuItem.submenu = appMenu
 
         let repositoryMenuItem = NSMenuItem()
         let repositoryMenu = NSMenu(title: "Repository")
-        repositoryMenu.addItem(
-            NSMenuItem(
-                title: "Open Repository...",
-                action: #selector(openRepositoryFromMenu),
-                keyEquivalent: "o"
-            )
+        let openRepositoryItem = NSMenuItem(
+            title: "Open Repository...",
+            action: #selector(openRepositoryFromMenu),
+            keyEquivalent: "o"
         )
+        openRepositoryItem.target = self
+        repositoryMenu.addItem(openRepositoryItem)
         repositoryMenuItem.submenu = repositoryMenu
         mainMenu.addItem(repositoryMenuItem)
+
+        let viewMenuItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        let zoomInItem = NSMenuItem(
+            title: "Zoom In",
+            action: #selector(zoomIn),
+            keyEquivalent: "="
+        )
+        zoomInItem.target = self
+        viewMenu.addItem(zoomInItem)
+
+        let zoomOutItem = NSMenuItem(
+            title: "Zoom Out",
+            action: #selector(zoomOut),
+            keyEquivalent: "-"
+        )
+        zoomOutItem.target = self
+        viewMenu.addItem(zoomOutItem)
+
+        let resetZoomItem = NSMenuItem(
+            title: "Actual Size",
+            action: #selector(resetZoom),
+            keyEquivalent: "0"
+        )
+        resetZoomItem.target = self
+        viewMenu.addItem(resetZoomItem)
+        viewMenuItem.submenu = viewMenu
+        mainMenu.addItem(viewMenuItem)
 
         NSApp.mainMenu = mainMenu
     }

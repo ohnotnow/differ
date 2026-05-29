@@ -107,6 +107,13 @@ struct DifferWebView: NSViewRepresentable {
                     self?.sendSelectedPatch(selectedPatch)
                 }
                 .store(in: &cancellables)
+
+            appState.$refreshIntervalMilliseconds
+                .combineLatest(appState.$uiZoomPercent)
+                .sink { [weak self] _ in
+                    self?.sendPreferences()
+                }
+                .store(in: &cancellables)
         }
 
         private func handleWebMessage(_ body: Any) {
@@ -142,14 +149,34 @@ struct DifferWebView: NSViewRepresentable {
                 }
 
             case "set-refresh-interval":
-                guard let milliseconds = message["milliseconds"] as? Int else {
+                guard let milliseconds = intValue(from: message["milliseconds"]) else {
                     return
                 }
 
                 appState.setRefreshInterval(milliseconds: milliseconds)
 
+            case "set-ui-zoom":
+                guard let percent = intValue(from: message["percent"]) else {
+                    return
+                }
+
+                appState.setUiZoomPercent(percent)
+
             default:
                 break
+            }
+        }
+
+        private func intValue(from value: Any?) -> Int? {
+            switch value {
+            case let int as Int:
+                return int
+            case let number as NSNumber:
+                return number.intValue
+            case let string as String:
+                return Int(string)
+            default:
+                return nil
             }
         }
 
@@ -178,7 +205,10 @@ struct DifferWebView: NSViewRepresentable {
             evaluateDifferCall(
                 functionName: "applyPreferences",
                 arguments: [
-                    WebPreferences(refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds),
+                    WebPreferences(
+                        refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
+                        uiZoomPercent: appState.uiZoomPercent
+                    ),
                 ]
             )
         }
@@ -221,4 +251,5 @@ private struct AnyEncodable: Encodable {
 
 private struct WebPreferences: Encodable {
     let refreshIntervalMilliseconds: Int
+    let uiZoomPercent: Int
 }

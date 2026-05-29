@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var isLoading = false
     @Published private(set) var refreshIntervalMilliseconds: Int
+    @Published private(set) var uiZoomPercent: Int
 
     private let defaults: UserDefaults
     private var snapshotFingerprint: String?
@@ -28,6 +29,9 @@ final class AppState: ObservableObject {
 
         let storedRefreshInterval = defaults.integer(forKey: DefaultsKey.refreshIntervalMilliseconds)
         self.refreshIntervalMilliseconds = max(1_000, storedRefreshInterval > 0 ? storedRefreshInterval : 5_000)
+
+        let storedZoomPercent = defaults.integer(forKey: DefaultsKey.uiZoomPercent)
+        self.uiZoomPercent = Self.clampedZoomPercent(storedZoomPercent > 0 ? storedZoomPercent : 100)
     }
 
     var selectedRepositoryDisplayName: String {
@@ -95,6 +99,12 @@ final class AppState: ObservableObject {
         defaults.set(clampedMilliseconds, forKey: DefaultsKey.refreshIntervalMilliseconds)
     }
 
+    func setUiZoomPercent(_ percent: Int) {
+        let clampedPercent = Self.clampedZoomPercent(percent)
+        uiZoomPercent = clampedPercent
+        defaults.set(clampedPercent, forKey: DefaultsKey.uiZoomPercent)
+    }
+
     func selectFile(path: String) async {
         guard let selectedRepositoryURL,
               let file = snapshot?.files.first(where: { $0.path == path })
@@ -125,11 +135,16 @@ final class AppState: ObservableObject {
 
         return files + "\n---patch---\n" + snapshot.allPatch
     }
+
+    private static func clampedZoomPercent(_ percent: Int) -> Int {
+        min(180, max(80, percent))
+    }
 }
 
 private enum DefaultsKey {
     static let selectedRepositoryPath = "selectedRepositoryPath"
     static let refreshIntervalMilliseconds = "refreshIntervalMilliseconds"
+    static let uiZoomPercent = "uiZoomPercent"
 }
 
 struct SelectedPatch: Equatable, Identifiable {
