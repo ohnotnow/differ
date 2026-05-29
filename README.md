@@ -2,7 +2,7 @@
 
 Differ is a native macOS app for watching the current state of a Git working tree.
 
-It opens a local repository, polls `git status` and `git diff`, and renders the result in a compact split view with a file tree, a file list, and a diff pane. It is aimed at the "what did I just change?" loop while coding, especially when you want to run `differ .` from a project and keep the app open beside your editor.
+It opens a local repository, polls `git status` and `git diff`, and renders the result in a compact split view with a file tree, a file list, and a diff pane. It is aimed at the "what did the coding agent do?" side of things.
 
 ![Screenshot](screenshot.png)
 
