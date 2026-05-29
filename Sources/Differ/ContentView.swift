@@ -29,8 +29,8 @@ struct ContentView: View {
     }
 
     private static func defaultWebRootURL() -> URL? {
-        Bundle.module.url(forResource: "index", withExtension: "html")
-            ?? Bundle.module.url(forResource: "index", withExtension: "html", subdirectory: "Web")
+        Bundle.module.url(forResource: "index", withExtension: "html", subdirectory: "Web")
+            ?? Bundle.module.url(forResource: "index", withExtension: "html")
     }
 
     private var toolbar: some View {

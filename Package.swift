@@ -17,7 +17,7 @@ let package = Package(
             name: "Differ",
             dependencies: ["DifferCore"],
             resources: [
-                .process("Resources/Web"),
+                .copy("Resources/Web"),
             ]
         ),
         .testTarget(

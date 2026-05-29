@@ -55,7 +55,36 @@ struct DifferWebView: NSViewRepresentable {
                 return
             }
 
+            print("Differ web message:", message.body)
             handleWebMessage(message.body)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            let script = """
+            JSON.stringify({
+              href: window.location.href,
+              stylesheets: document.styleSheets.length,
+              scripts: document.scripts.length,
+              differType: typeof window.Differ
+            })
+            """
+
+            webView.evaluateJavaScript(script) { result, error in
+                if let error {
+                    print("Differ web diagnostics failed:", error.localizedDescription)
+                    return
+                }
+
+                print("Differ web diagnostics:", result ?? "nil")
+            }
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            print("Differ web navigation failed:", error.localizedDescription)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            print("Differ web provisional navigation failed:", error.localizedDescription)
         }
 
         private func bindAppState() {
@@ -129,6 +158,7 @@ struct DifferWebView: NSViewRepresentable {
                 return
             }
 
+            print("Differ native snapshot: \(snapshot.files.count) files, \(snapshot.allPatch.utf8.count) patch bytes")
             evaluateDifferCall(functionName: "applySnapshot", arguments: [snapshot])
         }
 

@@ -29,17 +29,86 @@ struct GitSnapshotServiceTests {
                 workTreeStatus: "M"
             )
         ))
-        #expect(snapshot.files.contains(
-            ChangedFile(
-                path: "Untracked.txt",
-                status: .untracked,
-                indexStatus: "?",
-                workTreeStatus: "?"
-            )
-        ))
+        let untrackedFile = try #require(snapshot.files.first { $0.path == "Untracked.txt" })
+        #expect(untrackedFile.status == .untracked)
+        #expect(untrackedFile.indexStatus == "?")
+        #expect(untrackedFile.workTreeStatus == "?")
+        #expect(untrackedFile.contents == "new\n")
         #expect(snapshot.allPatch.contains("diff --git a/Tracked.txt b/Tracked.txt"))
         #expect(snapshot.allPatch.contains("+two"))
         #expect(snapshot.allPatch.contains("diff --git a/Untracked.txt b/Untracked.txt"))
+    }
+
+    @Test("captures changes before the first commit")
+    func capturesChangesBeforeFirstCommit() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+
+        try "staged\n".write(to: rootURL.appending(path: "Staged.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "Staged.txt"], in: rootURL)
+        try "new\n".write(to: rootURL.appending(path: "Untracked.txt"), atomically: true, encoding: .utf8)
+
+        let service = GitSnapshotService()
+        let snapshot = try service.snapshot(for: rootURL)
+
+        #expect(snapshot.files.contains(
+            ChangedFile(
+                path: "Staged.txt",
+                status: .added,
+                indexStatus: "A",
+                workTreeStatus: " "
+            )
+        ))
+        #expect(snapshot.files.contains { $0.path == "Untracked.txt" && $0.status == .untracked })
+        #expect(snapshot.allPatch.contains("diff --git a/Staged.txt b/Staged.txt"))
+        #expect(snapshot.allPatch.contains("diff --git a/Untracked.txt b/Untracked.txt"))
+
+        let stagedFile = try #require(snapshot.files.first { $0.path == "Staged.txt" })
+        #expect(try service.patch(for: .file(stagedFile), in: rootURL).contains("+staged"))
+    }
+
+    @Test("omits oversized untracked content from preview patches")
+    func omitsOversizedUntrackedContent() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+        try runGit(["config", "user.name", "Differ Tests"], in: rootURL)
+        try runGit(["config", "user.email", "differ@example.test"], in: rootURL)
+        try runGit(["commit", "--allow-empty", "-m", "Initial commit"], in: rootURL)
+
+        let largeText = String(repeating: "x", count: 600_000)
+        try largeText.write(to: rootURL.appending(path: "Large.txt"), atomically: true, encoding: .utf8)
+
+        let service = GitSnapshotService()
+        let snapshot = try service.snapshot(for: rootURL)
+        let file = try #require(snapshot.files.first { $0.path == "Large.txt" })
+
+        #expect(file.status == .untracked)
+        #expect(file.contents == nil)
+        #expect(snapshot.allPatch.isEmpty)
+        #expect(try service.patch(for: .file(file), in: rootURL).isEmpty)
+    }
+
+    @Test("omits oversized tracked patches without blocking snapshots")
+    func omitsOversizedTrackedPatches() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+        try runGit(["config", "user.name", "Differ Tests"], in: rootURL)
+        try runGit(["config", "user.email", "differ@example.test"], in: rootURL)
+
+        try "small\n".write(to: rootURL.appending(path: "Tracked.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "Tracked.txt"], in: rootURL)
+        try runGit(["commit", "-m", "Initial commit"], in: rootURL)
+
+        let largeText = String(repeating: "x", count: 2_200_000)
+        try largeText.write(to: rootURL.appending(path: "Tracked.txt"), atomically: true, encoding: .utf8)
+
+        let service = GitSnapshotService()
+        let snapshot = try service.snapshot(for: rootURL)
+        let file = try #require(snapshot.files.first { $0.path == "Tracked.txt" })
+
+        #expect(file.status == .modified)
+        #expect(snapshot.allPatch.isEmpty)
+        #expect(try service.patch(for: .file(file), in: rootURL).isEmpty)
     }
 
     private func temporaryDirectory() throws -> URL {

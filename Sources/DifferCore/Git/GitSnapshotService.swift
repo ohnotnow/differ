@@ -1,6 +1,10 @@
 import Foundation
 
 public struct GitSnapshotService: Sendable {
+    private static let maximumPreviewBytes = 512 * 1_024
+    private static let maximumSnapshotPatchBytes = 2 * 1_024 * 1_024
+    private static let maximumSelectedPatchBytes = 512 * 1_024
+
     private let runner: GitCommandRunner
     private let statusParser: PorcelainStatusParser
     private let untrackedPatchBuilder: UntrackedPatchBuilder
@@ -27,7 +31,7 @@ public struct GitSnapshotService: Sendable {
             ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
             in: rootURL
         )
-        let files = try statusParser.parse(statusData)
+        let files = try filesWithContentPreviews(try statusParser.parse(statusData), in: rootURL)
         let patch = try patch(for: .all, files: files, in: rootURL)
 
         return GitSnapshot(
@@ -44,42 +48,170 @@ public struct GitSnapshotService: Sendable {
             ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
             in: rootURL
         )
-        let files = try statusParser.parse(statusData)
+        let files = try filesWithContentPreviews(try statusParser.parse(statusData), in: rootURL)
 
         return try patch(for: selection, files: files, in: rootURL)
     }
 
+    private func filesWithContentPreviews(_ files: [ChangedFile], in rootURL: URL) throws -> [ChangedFile] {
+        try files.map { file in
+            guard file.status == .untracked,
+                  let contents = try previewContents(for: file.path, in: rootURL)
+            else {
+                return file
+            }
+
+            return ChangedFile(
+                path: file.path,
+                oldPath: file.oldPath,
+                status: file.status,
+                indexStatus: file.indexStatus,
+                workTreeStatus: file.workTreeStatus,
+                contents: contents
+            )
+        }
+    }
+
+    private func previewContents(for relativePath: String, in rootURL: URL) throws -> String? {
+        let fileURL = rootURL.appending(path: relativePath)
+        var isDirectory: ObjCBool = false
+
+        guard FileManager.default.fileExists(atPath: fileURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue == false
+        else {
+            return nil
+        }
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        if let size = attributes[.size] as? NSNumber,
+           size.intValue > Self.maximumPreviewBytes
+        {
+            return nil
+        }
+
+        let data = try Data(contentsOf: fileURL)
+
+        guard data.contains(0) == false else {
+            return nil
+        }
+
+        return String(data: data, encoding: .utf8)
+    }
+
     private func patch(for selection: GitDiffSelection, files: [ChangedFile], in rootURL: URL) throws -> String {
+        let repositoryHasHead = hasHead(in: rootURL)
+
         switch selection {
         case .all:
-            let trackedPatch = try stringOutput(
-                ["diff", "--no-ext-diff", "--binary", "HEAD", "--"],
+            guard let trackedPatch = try trackedPatch(
+                for: nil,
+                repositoryHasHead: repositoryHasHead,
+                maximumBytes: Self.maximumSnapshotPatchBytes,
                 in: rootURL
-            )
-            let untrackedPatches = try files
-                .filter { $0.status == .untracked }
-                .map { try untrackedPatchBuilder.patch(for: $0.path, in: rootURL) }
-                .joined(separator: "\n")
-
-            if trackedPatch.isEmpty {
-                return untrackedPatches
+            ) else {
+                return ""
             }
 
-            if untrackedPatches.isEmpty {
-                return trackedPatch
+            var patches = trackedPatch.isEmpty ? "" : trackedPatch
+            var patchBytes = patches.utf8.count
+
+            for file in files where file.status == .untracked {
+                guard let patch = try untrackedPatch(for: file, in: rootURL) else {
+                    continue
+                }
+
+                let separator = patches.isEmpty ? "" : "\n"
+                let nextBytes = patchBytes + separator.utf8.count + patch.utf8.count
+
+                guard nextBytes <= Self.maximumSnapshotPatchBytes else {
+                    continue
+                }
+
+                patches += separator + patch
+                patchBytes = nextBytes
             }
 
-            return trackedPatch + "\n" + untrackedPatches
+            return patches
 
         case .file(let file) where file.status == .untracked:
-            return try untrackedPatchBuilder.patch(for: file.path, in: rootURL)
+            return try untrackedPatch(for: file, in: rootURL) ?? ""
 
         case .file(let file):
-            return try stringOutput(
-                ["diff", "--no-ext-diff", "--binary", "HEAD", "--", file.path],
+            return try trackedPatch(
+                for: file.path,
+                repositoryHasHead: repositoryHasHead,
+                maximumBytes: Self.maximumSelectedPatchBytes,
+                in: rootURL
+            ) ?? ""
+        }
+    }
+
+    private func trackedPatch(
+        for path: String?,
+        repositoryHasHead: Bool,
+        maximumBytes: Int,
+        in rootURL: URL
+    ) throws -> String? {
+        if repositoryHasHead {
+            return try limitedStringOutput(
+                diffArguments(base: ["diff", "--no-ext-diff", "--binary", "HEAD"], path: path),
+                maximumBytes: maximumBytes,
                 in: rootURL
             )
         }
+
+        guard let cachedPatch = try limitedStringOutput(
+            diffArguments(base: ["diff", "--cached", "--no-ext-diff", "--binary"], path: path),
+            maximumBytes: maximumBytes,
+            in: rootURL
+        ) else {
+            return nil
+        }
+
+        let remainingBytes = maximumBytes - cachedPatch.utf8.count
+        guard remainingBytes > 0 else {
+            return cachedPatch
+        }
+
+        guard let workTreePatch = try limitedStringOutput(
+            diffArguments(base: ["diff", "--no-ext-diff", "--binary"], path: path),
+            maximumBytes: remainingBytes,
+            in: rootURL
+        ) else {
+            return cachedPatch.isEmpty ? nil : cachedPatch
+        }
+
+        if cachedPatch.isEmpty {
+            return workTreePatch
+        }
+
+        if workTreePatch.isEmpty {
+            return cachedPatch
+        }
+
+        return cachedPatch + "\n" + workTreePatch
+    }
+
+    private func diffArguments(base: [String], path: String?) -> [String] {
+        guard let path else {
+            return base + ["--"]
+        }
+
+        return base + ["--", path]
+    }
+
+    private func untrackedPatch(for file: ChangedFile, in rootURL: URL) throws -> String? {
+        guard try fileSize(for: file.path, in: rootURL) <= Self.maximumSelectedPatchBytes else {
+            return nil
+        }
+
+        let patch = try untrackedPatchBuilder.patch(for: file.path, in: rootURL)
+
+        guard patch.utf8.count <= Self.maximumSelectedPatchBytes else {
+            return nil
+        }
+
+        return patch
     }
 
     private func resolvedRepositoryRoot(for repositoryURL: URL) throws -> URL {
@@ -98,8 +230,22 @@ public struct GitSnapshotService: Sendable {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    private func stringOutput(_ arguments: [String], in repositoryURL: URL) throws -> String {
-        let data = try runner.run(arguments, in: repositoryURL)
+    private func hasHead(in rootURL: URL) -> Bool {
+        (try? runner.run(["rev-parse", "--verify", "HEAD"], in: rootURL)) != nil
+    }
+
+    private func limitedStringOutput(_ arguments: [String], maximumBytes: Int, in repositoryURL: URL) throws -> String? {
+        guard let data = try runner.run(arguments, maximumOutputBytes: maximumBytes, in: repositoryURL) else {
+            return nil
+        }
+
         return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private func fileSize(for relativePath: String, in rootURL: URL) throws -> Int {
+        let fileURL = rootURL.appending(path: relativePath)
+        let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = attributes[.size] as? NSNumber
+        return size?.intValue ?? 0
     }
 }

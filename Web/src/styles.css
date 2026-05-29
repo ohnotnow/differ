@@ -224,3 +224,49 @@ select {
   overflow: auto;
   padding: 14px;
 }
+
+.file-diff-frame + .file-diff-frame,
+.file-diff-frame + .diff-notice,
+.file-diff-frame + .file-preview-frame,
+.diff-notice + .file-diff-frame,
+.diff-notice + .diff-notice,
+.diff-notice + .file-preview-frame,
+.file-preview-frame + .file-diff-frame,
+.file-preview-frame + .diff-notice,
+.file-preview-frame + .file-preview-frame {
+  margin-top: 12px;
+}
+
+.empty-state,
+.diff-notice {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-muted);
+}
+
+.empty-state {
+  padding: 18px;
+}
+
+.diff-notice {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.diff-notice-title {
+  display: block;
+  overflow: hidden;
+  color: #fffaf0;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-notice-detail {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
