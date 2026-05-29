@@ -111,6 +111,31 @@ struct GitSnapshotServiceTests {
         #expect(try service.patch(for: .file(file), in: rootURL).isEmpty)
     }
 
+    @Test("global patch keeps small diffs when other files are oversized")
+    func globalPatchKeepsSmallDiffsWhenOtherFilesAreOversized() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+        try runGit(["config", "user.name", "Differ Tests"], in: rootURL)
+        try runGit(["config", "user.email", "differ@example.test"], in: rootURL)
+
+        try "small\n".write(to: rootURL.appending(path: "Small.txt"), atomically: true, encoding: .utf8)
+        try "large\n".write(to: rootURL.appending(path: "Large.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "Small.txt", "Large.txt"], in: rootURL)
+        try runGit(["commit", "-m", "Initial commit"], in: rootURL)
+
+        try "small\nchanged\n".write(to: rootURL.appending(path: "Small.txt"), atomically: true, encoding: .utf8)
+        let largeText = String(repeating: "x", count: 600_000)
+        try largeText.write(to: rootURL.appending(path: "Large.txt"), atomically: true, encoding: .utf8)
+
+        let snapshot = try GitSnapshotService().snapshot(for: rootURL)
+
+        #expect(snapshot.files.contains { $0.path == "Small.txt" && $0.status == .modified })
+        #expect(snapshot.files.contains { $0.path == "Large.txt" && $0.status == .modified })
+        #expect(snapshot.allPatch.contains("diff --git a/Small.txt b/Small.txt"))
+        #expect(snapshot.allPatch.contains("+changed"))
+        #expect(snapshot.allPatch.contains("diff --git a/Large.txt b/Large.txt") == false)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GitSnapshotServiceTests-\(UUID().uuidString)", directoryHint: .isDirectory)

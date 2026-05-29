@@ -263,11 +263,6 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
 
   const missingFiles = missingDiffFiles(fileDiffs);
 
-  if (selectedPath === null && fileDiffs.length === 0 && missingFiles.length > 0) {
-    diffHost.append(emptyState(`${missingFiles.length} changed files. Select a file to render its diff.`));
-    return;
-  }
-
   if (fileDiffs.length === 0 && missingFiles.length === 0) {
     diffHost.append(emptyState("No diff to show"));
     return;

@@ -103,35 +103,7 @@ public struct GitSnapshotService: Sendable {
 
         switch selection {
         case .all:
-            guard let trackedPatch = try trackedPatch(
-                for: nil,
-                repositoryHasHead: repositoryHasHead,
-                maximumBytes: Self.maximumSnapshotPatchBytes,
-                in: rootURL
-            ) else {
-                return ""
-            }
-
-            var patches = trackedPatch.isEmpty ? "" : trackedPatch
-            var patchBytes = patches.utf8.count
-
-            for file in files where file.status == .untracked {
-                guard let patch = try untrackedPatch(for: file, in: rootURL) else {
-                    continue
-                }
-
-                let separator = patches.isEmpty ? "" : "\n"
-                let nextBytes = patchBytes + separator.utf8.count + patch.utf8.count
-
-                guard nextBytes <= Self.maximumSnapshotPatchBytes else {
-                    continue
-                }
-
-                patches += separator + patch
-                patchBytes = nextBytes
-            }
-
-            return patches
+            return try aggregatedPatch(for: files, repositoryHasHead: repositoryHasHead, in: rootURL)
 
         case .file(let file) where file.status == .untracked:
             return try untrackedPatch(for: file, in: rootURL) ?? ""
@@ -144,6 +116,48 @@ public struct GitSnapshotService: Sendable {
                 in: rootURL
             ) ?? ""
         }
+    }
+
+    private func aggregatedPatch(
+        for files: [ChangedFile],
+        repositoryHasHead: Bool,
+        in rootURL: URL
+    ) throws -> String {
+        var patches = [String]()
+        var patchBytes = 0
+
+        for file in files {
+            let patch: String?
+            switch file.status {
+            case .untracked:
+                patch = try untrackedPatch(for: file, in: rootURL)
+            case .ignored:
+                patch = nil
+            default:
+                patch = try trackedPatch(
+                    for: file.path,
+                    repositoryHasHead: repositoryHasHead,
+                    maximumBytes: Self.maximumSelectedPatchBytes,
+                    in: rootURL
+                )
+            }
+
+            guard let patch, patch.isEmpty == false else {
+                continue
+            }
+
+            let separatorBytes = patches.isEmpty ? 0 : 1
+            let nextBytes = patchBytes + separatorBytes + patch.utf8.count
+
+            guard nextBytes <= Self.maximumSnapshotPatchBytes else {
+                continue
+            }
+
+            patches.append(patch)
+            patchBytes = nextBytes
+        }
+
+        return patches.joined(separator: "\n")
     }
 
     private func trackedPatch(
