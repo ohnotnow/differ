@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Differ</title>
+    <script type="module" crossorigin src="./assets/index-BCBp_2vl.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-B4fAxxXW.css">
+  </head>
+  <body>
+    <main id="app" class="app-shell">
+      <aside class="sidebar" aria-label="Changed files">
+        <header class="sidebar-header">
+          <span class="label">Working Tree</span>
+          <strong id="change-count">3 changes</strong>
+        </header>
+
+        <div id="tree-host" class="tree-host"></div>
+
+        <nav id="fallback-files" class="fallback-files" aria-label="Changed file shortcuts"></nav>
+      </aside>
+
+      <section class="diff-surface" aria-label="Diff">
+        <header class="diff-header">
+          <div class="diff-title-block">
+            <span class="label">Diff</span>
+            <h1 id="selection-title">All changes</h1>
+          </div>
+
+          <div class="controls">
+            <label class="interval-control">
+              <span>Refresh</span>
+              <select id="refresh-interval">
+                <option value="2000">2s</option>
+                <option value="5000" selected>5s</option>
+                <option value="10000">10s</option>
+                <option value="30000">30s</option>
+              </select>
+            </label>
+
+            <button id="manual-refresh" class="button" type="button">Refresh</button>
+          </div>
+        </header>
+
+        <div id="diff-host" class="diff-host"></div>
+      </section>
+    </main>
+
+  </body>
+</html>

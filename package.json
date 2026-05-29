@@ -1,0 +1,17 @@
+{
+  "name": "differ",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:web": "vite build --config Web/vite.config.mjs"
+  },
+  "dependencies": {
+    "@pierre/diffs": "latest",
+    "@pierre/trees": "latest"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

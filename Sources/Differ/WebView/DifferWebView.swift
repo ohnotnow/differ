@@ -1,0 +1,194 @@
+import Combine
+import DifferCore
+import SwiftUI
+import WebKit
+
+struct DifferWebView: NSViewRepresentable {
+    let indexURL: URL
+    let appState: AppState
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(appState: appState)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.add(context.coordinator, name: "differ")
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        context.coordinator.webView = webView
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        guard webView.url != indexURL else {
+            return
+        }
+
+        webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        weak var webView: WKWebView?
+
+        private let appState: AppState
+        private var cancellables = Set<AnyCancellable>()
+        private var isWebReady = false
+        private let encoder: JSONEncoder = {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            return encoder
+        }()
+
+        init(appState: AppState) {
+            self.appState = appState
+            super.init()
+            bindAppState()
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "differ" else {
+                return
+            }
+
+            handleWebMessage(message.body)
+        }
+
+        private func bindAppState() {
+            appState.$snapshot
+                .sink { [weak self] snapshot in
+                    guard let snapshot else {
+                        return
+                    }
+
+                    self?.sendSnapshot(snapshot)
+                }
+                .store(in: &cancellables)
+
+            appState.$selectedPatch
+                .sink { [weak self] selectedPatch in
+                    guard let selectedPatch else {
+                        return
+                    }
+
+                    self?.sendSelectedPatch(selectedPatch)
+                }
+                .store(in: &cancellables)
+        }
+
+        private func handleWebMessage(_ body: Any) {
+            guard let message = body as? [String: Any],
+                  let type = message["type"] as? String
+            else {
+                return
+            }
+
+            switch type {
+            case "web-ready":
+                isWebReady = true
+                sendPreferences()
+                if let snapshot = appState.snapshot {
+                    sendSnapshot(snapshot)
+                }
+
+            case "manual-refresh":
+                Task {
+                    await appState.refreshSnapshot()
+                }
+
+            case "select-all":
+                appState.selectAllChanges()
+
+            case "select-file":
+                guard let path = message["path"] as? String else {
+                    return
+                }
+
+                Task {
+                    await appState.selectFile(path: path)
+                }
+
+            case "set-refresh-interval":
+                guard let milliseconds = message["milliseconds"] as? Int else {
+                    return
+                }
+
+                appState.setRefreshInterval(milliseconds: milliseconds)
+
+            default:
+                break
+            }
+        }
+
+        private func sendSnapshot(_ snapshot: GitSnapshot) {
+            guard isWebReady else {
+                return
+            }
+
+            evaluateDifferCall(functionName: "applySnapshot", arguments: [snapshot])
+        }
+
+        private func sendSelectedPatch(_ selectedPatch: SelectedPatch) {
+            guard isWebReady else {
+                return
+            }
+
+            evaluateDifferCall(functionName: "applyPatch", arguments: [selectedPatch.path, selectedPatch.patch])
+        }
+
+        private func sendPreferences() {
+            guard isWebReady else {
+                return
+            }
+
+            evaluateDifferCall(
+                functionName: "applyPreferences",
+                arguments: [
+                    WebPreferences(refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds),
+                ]
+            )
+        }
+
+        private func evaluateDifferCall(functionName: String, arguments: [Encodable]) {
+            guard let webView else {
+                return
+            }
+
+            do {
+                let argumentSource = try arguments
+                    .map { try jsonLiteral(for: $0) }
+                    .joined(separator: ", ")
+                let script = "window.Differ?.\(functionName)(\(argumentSource));"
+
+                webView.evaluateJavaScript(script)
+            } catch {
+                appState.reportBridgeError(error.localizedDescription)
+            }
+        }
+
+        private func jsonLiteral(for value: Encodable) throws -> String {
+            let data = try encoder.encode(AnyEncodable(value))
+            return String(data: data, encoding: .utf8) ?? "null"
+        }
+    }
+}
+
+private struct AnyEncodable: Encodable {
+    private let encodeValue: (Encoder) throws -> Void
+
+    init(_ wrapped: Encodable) {
+        self.encodeValue = wrapped.encode(to:)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        try encodeValue(encoder)
+    }
+}
+
+private struct WebPreferences: Encodable {
+    let refreshIntervalMilliseconds: Int
+}
