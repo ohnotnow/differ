@@ -17,6 +17,7 @@ let package = Package(
             name: "Differ",
             dependencies: ["DifferCore"],
             resources: [
+                .copy("Resources/differ.icns"),
                 .copy("Resources/Web"),
             ]
         ),

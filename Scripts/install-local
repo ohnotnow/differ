@@ -12,6 +12,7 @@ swift build -c release --product Differ
 
 build_dir="$(swift build -c release --show-bin-path)"
 bundle_name="Differ_Differ.bundle"
+icon_name="differ.icns"
 
 mkdir -p "$install_root" "$bin_dir"
 install -m 755 "$build_dir/Differ" "$install_root/Differ"
@@ -20,8 +21,10 @@ cp -R "$build_dir/$bundle_name" "$install_root/$bundle_name"
 
 app_binary_literal="$(printf "%q" "$install_root/Differ")"
 resource_bundle_literal="$(printf "%q" "$install_root/$bundle_name")"
+app_icon_literal="$(printf "%q" "$install_root/$bundle_name/$icon_name")"
 instances_root_literal="$(printf "%q" "$install_root/Instances")"
 bundle_name_literal="$(printf "%q" "$bundle_name")"
+icon_name_literal="$(printf "%q" "$icon_name")"
 launcher="$bin_dir/differ"
 
 {
@@ -31,8 +34,10 @@ set -euo pipefail
 
 app_binary=$app_binary_literal
 resource_bundle=$resource_bundle_literal
+app_icon=$app_icon_literal
 instances_root=$instances_root_literal
 bundle_name=$bundle_name_literal
+icon_name=$icon_name_literal
 
 EOF
 
@@ -73,9 +78,10 @@ xml_escape() {
   printf "%s" "$value"
 }
 
-mkdir -p "$app_dir/Contents/MacOS"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 ln -sfn "$app_binary" "$app_dir/Contents/MacOS/Differ"
 ln -sfn "$resource_bundle" "$app_dir/$bundle_name"
+cp -f "$app_icon" "$app_dir/Contents/Resources/$icon_name"
 
 repo_path_literal="$(printf "%q" "$repo_path")"
 cat > "$launcher_script" <<LAUNCHER
@@ -99,6 +105,8 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
   <string>$escaped_display_name</string>
   <key>CFBundleExecutable</key>
   <string>DifferProjectLauncher</string>
+  <key>CFBundleIconFile</key>
+  <string>differ</string>
   <key>CFBundleIdentifier</key>
   <string>$escaped_bundle_identifier</string>
   <key>CFBundleName</key>

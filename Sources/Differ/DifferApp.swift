@@ -25,6 +25,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        applyApplicationIcon()
         installMainMenu()
         bindApplicationIdentity()
         showMainWindow()
@@ -129,6 +130,16 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         ProcessInfo.processInfo.processName = displayName
         window?.title = displayName
+    }
+
+    private func applyApplicationIcon() {
+        guard let iconURL = Bundle.module.url(forResource: "differ", withExtension: "icns"),
+              let icon = NSImage(contentsOf: iconURL)
+        else {
+            return
+        }
+
+        NSApp.applicationIconImage = icon
     }
 
     private func installMainMenu() {

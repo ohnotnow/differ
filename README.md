@@ -55,7 +55,7 @@ differ .
 differ /path/to/repository
 ```
 
-The launcher starts the app in the background, so the shell prompt comes back immediately.
+The launcher creates or updates a lightweight per-repository wrapper app under `~/.local/share/differ/Instances`, named `Differ - <project>`, with its own bundle identifier and the Differ icon. It starts that wrapper in the background, so the shell prompt comes back immediately and macOS can distinguish each project instance in the Dock and app switcher.
 
 You can override the install locations:
 
