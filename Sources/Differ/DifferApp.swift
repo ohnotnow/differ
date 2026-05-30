@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -9,12 +10,14 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let appState = AppState()
     private let defaults = UserDefaults.standard
     private let launchOptions = LaunchOptions.current()
+    private var repositoryIdentityCancellable: AnyCancellable?
     private var window: NSWindow?
 
     static func main() {
-        let app = NSApplication.shared
         let delegate = DifferApp()
+        ProcessInfo.processInfo.processName = AppIdentity.displayName(for: delegate.initialRepositoryURL)
 
+        let app = NSApplication.shared
         delegateReference = delegate
         app.delegate = delegate
         app.setActivationPolicy(.regular)
@@ -23,6 +26,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         installMainMenu()
+        bindApplicationIdentity()
         showMainWindow()
         NSApp.activate()
 
@@ -92,7 +96,7 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             defer: false
         )
 
-        window.title = "Differ"
+        window.title = AppIdentity.displayName(for: initialRepositoryURL)
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: rootView)
         let targetFrame = restoredFrame ?? defaultMainWindowFrame()
@@ -101,6 +105,30 @@ final class DifferApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.setFrame(targetFrame, display: true)
 
         self.window = window
+    }
+
+    private var initialRepositoryURL: URL? {
+        launchOptions.repositoryURL ?? appState.selectedRepositoryURL
+    }
+
+    private func bindApplicationIdentity() {
+        applyApplicationDisplayName(for: initialRepositoryURL)
+
+        repositoryIdentityCancellable = appState.$selectedRepositoryURL
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] repositoryURL in
+                Task { @MainActor [weak self] in
+                    self?.applyApplicationDisplayName(for: repositoryURL)
+                }
+            }
+    }
+
+    private func applyApplicationDisplayName(for repositoryURL: URL?) {
+        let displayName = AppIdentity.displayName(for: repositoryURL)
+
+        ProcessInfo.processInfo.processName = displayName
+        window?.title = displayName
     }
 
     private func installMainMenu() {

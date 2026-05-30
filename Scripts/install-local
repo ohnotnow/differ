@@ -19,29 +19,104 @@ rm -rf "$install_root/$bundle_name"
 cp -R "$build_dir/$bundle_name" "$install_root/$bundle_name"
 
 app_binary_literal="$(printf "%q" "$install_root/Differ")"
+resource_bundle_literal="$(printf "%q" "$install_root/$bundle_name")"
+instances_root_literal="$(printf "%q" "$install_root/Instances")"
+bundle_name_literal="$(printf "%q" "$bundle_name")"
 launcher="$bin_dir/differ"
 
-cat > "$launcher" <<EOF
+{
+cat <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
 app_binary=$app_binary_literal
-raw_path="\${1:-.}"
+resource_bundle=$resource_bundle_literal
+instances_root=$instances_root_literal
+bundle_name=$bundle_name_literal
 
-if [[ -d "\$raw_path" ]]; then
-  repo_path="\$(cd "\$raw_path" && pwd -P)"
+EOF
+
+cat <<'EOF'
+raw_path="${1:-.}"
+
+if [[ -d "$raw_path" ]]; then
+  repo_path="$(cd "$raw_path" && pwd -P)"
 else
-  parent="\$(dirname "\$raw_path")"
-  basename="\$(basename "\$raw_path")"
-  if [[ -d "\$parent" ]]; then
-    repo_path="\$(cd "\$parent" && pwd -P)/\$basename"
+  parent="$(dirname "$raw_path")"
+  basename="$(basename "$raw_path")"
+  if [[ -d "$parent" ]]; then
+    repo_path="$(cd "$parent" && pwd -P)/$basename"
   else
-    repo_path="\$raw_path"
+    repo_path="$raw_path"
   fi
 fi
 
-nohup "\$app_binary" "\$repo_path" >/dev/null 2>&1 &
+project_name="$(basename "$repo_path")"
+if [[ -z "$project_name" || "$project_name" == "/" ]]; then
+  project_name="repository"
+fi
+
+repo_hash="$(printf "%s" "$repo_path" | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+app_display_name="Differ - $project_name"
+bundle_identifier="com.ohnotnow.differ.repo-$repo_hash"
+instance_dir="$instances_root/$repo_hash"
+app_dir="$instance_dir/$app_display_name.app"
+launcher_script="$app_dir/Contents/MacOS/DifferProjectLauncher"
+
+xml_escape() {
+  local value="$1"
+  value="${value//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  value="${value//\"/&quot;}"
+  value="${value//\'/&apos;}"
+  printf "%s" "$value"
+}
+
+mkdir -p "$app_dir/Contents/MacOS"
+ln -sfn "$app_binary" "$app_dir/Contents/MacOS/Differ"
+ln -sfn "$resource_bundle" "$app_dir/$bundle_name"
+
+repo_path_literal="$(printf "%q" "$repo_path")"
+cat > "$launcher_script" <<LAUNCHER
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec "\$(dirname "\$0")/Differ" $repo_path_literal
+LAUNCHER
+chmod 755 "$launcher_script"
+
+escaped_display_name="$(xml_escape "$app_display_name")"
+escaped_bundle_identifier="$(xml_escape "$bundle_identifier")"
+cat > "$app_dir/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>$escaped_display_name</string>
+  <key>CFBundleExecutable</key>
+  <string>DifferProjectLauncher</string>
+  <key>CFBundleIdentifier</key>
+  <string>$escaped_bundle_identifier</string>
+  <key>CFBundleName</key>
+  <string>$escaped_display_name</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+
+touch "$app_dir"
+open -n "$app_dir"
 EOF
+} > "$launcher"
 
 chmod 755 "$launcher"
 
