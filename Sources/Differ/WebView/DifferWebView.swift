@@ -115,8 +115,19 @@ struct DifferWebView: NSViewRepresentable {
                 appState.$sidebarWidthPoints
             )
                 .combineLatest(appState.$themeName)
-                .sink { [weak self] _ in
-                    self?.sendPreferences()
+                // @Published emits in willSet, so re-reading appState here returns
+                // the *previous* values. Use the values Combine emits instead, which
+                // are the new ones — otherwise the echo reverts the web's optimistic
+                // update (the "one change behind" bug).
+                .sink { [weak self] values in
+                    let ((interval, autoRefresh, zoom, sidebarWidth), theme) = values
+                    self?.sendPreferences(
+                        refreshIntervalMilliseconds: interval,
+                        autoRefreshEnabled: autoRefresh,
+                        uiZoomPercent: zoom,
+                        sidebarWidthPoints: sidebarWidth,
+                        theme: theme
+                    )
                 }
                 .store(in: &cancellables)
         }
@@ -131,7 +142,7 @@ struct DifferWebView: NSViewRepresentable {
             switch type {
             case "web-ready":
                 isWebReady = true
-                sendPreferences()
+                sendCurrentPreferences()
                 if let snapshot = appState.snapshot {
                     sendSnapshot(snapshot)
                 }
@@ -233,7 +244,23 @@ struct DifferWebView: NSViewRepresentable {
             evaluateDifferCall(functionName: "applyPatch", arguments: [selectedPatch.path, selectedPatch.patch])
         }
 
-        private func sendPreferences() {
+        private func sendCurrentPreferences() {
+            sendPreferences(
+                refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
+                autoRefreshEnabled: appState.isAutoRefreshEnabled,
+                uiZoomPercent: appState.uiZoomPercent,
+                sidebarWidthPoints: appState.sidebarWidthPoints,
+                theme: appState.themeName
+            )
+        }
+
+        private func sendPreferences(
+            refreshIntervalMilliseconds: Int,
+            autoRefreshEnabled: Bool,
+            uiZoomPercent: Int,
+            sidebarWidthPoints: Int,
+            theme: String
+        ) {
             guard isWebReady else {
                 return
             }
@@ -242,11 +269,11 @@ struct DifferWebView: NSViewRepresentable {
                 functionName: "applyPreferences",
                 arguments: [
                     WebPreferences(
-                        refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
-                        autoRefreshEnabled: appState.isAutoRefreshEnabled,
-                        uiZoomPercent: appState.uiZoomPercent,
-                        sidebarWidthPoints: appState.sidebarWidthPoints,
-                        theme: appState.themeName
+                        refreshIntervalMilliseconds: refreshIntervalMilliseconds,
+                        autoRefreshEnabled: autoRefreshEnabled,
+                        uiZoomPercent: uiZoomPercent,
+                        sidebarWidthPoints: sidebarWidthPoints,
+                        theme: theme
                     ),
                 ]
             )
