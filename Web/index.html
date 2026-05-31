@@ -37,8 +37,24 @@
           </div>
 
           <div class="controls">
+            <div class="theme-control" aria-label="Theme">
+              <select id="theme-select" class="theme-select" title="Theme" aria-label="Theme">
+                <option value="pierre-dark">Pierre Dark</option>
+                <option value="pierre-dark-soft">Pierre Dark Soft</option>
+                <option value="nord">Nord</option>
+                <option value="github-dark">GitHub Dark</option>
+                <option value="tokyo-night">Tokyo Night</option>
+                <option value="gruvbox-dark-medium">Gruvbox Dark</option>
+                <option value="catppuccin-mocha">Catppuccin Mocha</option>
+              </select>
+            </div>
+
             <div class="zoom-control" aria-label="Text zoom">
-              <button id="zoom-out" class="icon-button" type="button" title="Zoom out" aria-label="Zoom out">−</button>
+              <span class="control-icon" aria-hidden="true" title="Text zoom">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="m15.75 15.75-2.489-2.489m0 0a3.375 3.375 0 1 0-4.773-4.773 3.375 3.375 0 0 0 4.774 4.774ZM21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </span>
               <select id="zoom-select" class="zoom-select" title="Zoom level" aria-label="Zoom level">
                 <option value="80">80%</option>
                 <option value="90">90%</option>
@@ -53,12 +69,15 @@
                 <option value="180">180%</option>
                 <option value="200">200%</option>
               </select>
-              <button id="zoom-in" class="icon-button" type="button" title="Zoom in" aria-label="Zoom in">+</button>
             </div>
 
-            <label class="interval-control">
-              <span>Refresh</span>
-              <select id="refresh-interval">
+            <label class="interval-control" aria-label="Refresh interval">
+              <span class="control-icon" aria-hidden="true" title="Refresh interval">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+              </span>
+              <select id="refresh-interval" aria-label="Refresh interval">
                 <option value="2000">2s</option>
                 <option value="5000" selected>5s</option>
                 <option value="10000">10s</option>

@@ -114,6 +114,7 @@ struct DifferWebView: NSViewRepresentable {
                 appState.$uiZoomPercent,
                 appState.$sidebarWidthPoints
             )
+                .combineLatest(appState.$themeName)
                 .sink { [weak self] _ in
                     self?.sendPreferences()
                 }
@@ -177,6 +178,13 @@ struct DifferWebView: NSViewRepresentable {
 
                 appState.setSidebarWidth(points: points)
 
+            case "set-theme":
+                guard let theme = message["theme"] as? String else {
+                    return
+                }
+
+                appState.setTheme(theme)
+
             default:
                 break
             }
@@ -237,7 +245,8 @@ struct DifferWebView: NSViewRepresentable {
                         refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
                         autoRefreshEnabled: appState.isAutoRefreshEnabled,
                         uiZoomPercent: appState.uiZoomPercent,
-                        sidebarWidthPoints: appState.sidebarWidthPoints
+                        sidebarWidthPoints: appState.sidebarWidthPoints,
+                        theme: appState.themeName
                     ),
                 ]
             )
@@ -284,4 +293,5 @@ private struct WebPreferences: Encodable {
     let autoRefreshEnabled: Bool
     let uiZoomPercent: Int
     let sidebarWidthPoints: Int
+    let theme: String
 }

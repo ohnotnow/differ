@@ -1,5 +1,5 @@
-import { File as FileView, FileDiff, parsePatchFiles, type FileContents, type FileDiffMetadata } from "@pierre/diffs";
-import { FileTree, type GitStatusEntry } from "@pierre/trees";
+import { File as FileView, FileDiff, parsePatchFiles, resolveTheme, type FileContents, type FileDiffMetadata } from "@pierre/diffs";
+import { FileTree, themeToTreeStyles, type GitStatusEntry, type TreeThemeStyles } from "@pierre/trees";
 import "./styles.css";
 
 type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "ignored" | "conflicted" | "mixed";
@@ -25,6 +25,7 @@ type DifferPreferences = {
   autoRefreshEnabled: boolean;
   uiZoomPercent: number;
   sidebarWidthPoints: number;
+  theme: string;
 };
 
 type NativeMessage =
@@ -34,6 +35,7 @@ type NativeMessage =
   | { type: "set-refresh-interval"; milliseconds: number }
   | { type: "set-ui-zoom"; percent: number }
   | { type: "set-sidebar-width"; points: number }
+  | { type: "set-theme"; theme: string }
   | { type: "web-ready" };
 
 declare global {
@@ -60,9 +62,9 @@ const selectionTitle = mustFind<HTMLElement>("#selection-title");
 const autoRefresh = mustFind<HTMLButtonElement>("#auto-refresh");
 const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
-const zoomIn = mustFind<HTMLButtonElement>("#zoom-in");
-const zoomOut = mustFind<HTMLButtonElement>("#zoom-out");
 const zoomSelect = mustFind<HTMLSelectElement>("#zoom-select");
+const themeSelect = mustFind<HTMLSelectElement>("#theme-select");
+const sidebar = mustFind<HTMLElement>(".sidebar");
 const appShell = mustFind<HTMLElement>("#app");
 const panelResizer = mustFind<HTMLElement>("#panel-resizer");
 
@@ -76,6 +78,17 @@ const minimumSidebarWidthPoints = 140;
 const maximumSidebarWidthPoints = 2000;
 const sidebarKeyboardStepPoints = 16;
 const reservedDiffRem = 18;
+
+const defaultTheme = "pierre-dark";
+const availableThemes = [
+  "pierre-dark",
+  "pierre-dark-soft",
+  "nord",
+  "github-dark",
+  "tokyo-night",
+  "gruvbox-dark-medium",
+  "catppuccin-mocha",
+];
 
 const emptySnapshot: DifferSnapshot = {
   repositoryPath: "",
@@ -100,6 +113,8 @@ let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
 let uiZoomPercent = defaultZoomPercent;
 let sidebarWidthPoints = defaultSidebarWidthPoints;
+let currentTheme = defaultTheme;
+const treeStylesCache = new Map<string, TreeThemeStyles>();
 let autoRefreshEnabled = true;
 let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
@@ -398,7 +413,7 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
     diffHost.append(frame);
 
     const view = new FileDiff({
-      theme: "pierre-dark",
+      theme: currentTheme,
       diffStyle: "unified",
       hunkSeparators: "line-info-basic",
       overflow: "scroll",
@@ -482,7 +497,7 @@ function renderFilePreview(file: ChangedFile) {
   };
 
   const view = new FileView({
-    theme: "pierre-dark",
+    theme: currentTheme,
     overflow: "scroll",
   });
 
@@ -631,8 +646,6 @@ function setUiZoomPercent(percent: number, notifyNative = true) {
   uiZoomPercent = nextZoomPercent;
   document.documentElement.style.setProperty("--ui-scale", `${nextZoomPercent / 100}`);
   zoomSelect.value = `${nextZoomPercent}`;
-  zoomOut.disabled = nextZoomPercent <= minimumZoomPercent;
-  zoomIn.disabled = nextZoomPercent >= maximumZoomPercent;
 
   if (didChange) {
     scheduleZoomReflow();
@@ -728,6 +741,54 @@ function clampSidebarWidthPoints(points: number) {
   return Math.min(maximumSidebarWidthPoints, Math.max(minimumSidebarWidthPoints, logical));
 }
 
+function setTheme(name: string, notifyNative = true) {
+  const nextTheme = availableThemes.includes(name) ? name : defaultTheme;
+  const didChange = nextTheme !== currentTheme;
+
+  currentTheme = nextTheme;
+  themeSelect.value = nextTheme;
+
+  void applyTreeTheme(nextTheme);
+
+  if (didChange) {
+    renderDiff(currentDiffFiles);
+  }
+
+  if (notifyNative && didChange) {
+    postNative({ type: "set-theme", theme: nextTheme });
+  }
+}
+
+async function applyTreeTheme(name: string) {
+  try {
+    let styles = treeStylesCache.get(name);
+
+    if (!styles) {
+      const resolved = await resolveTheme(name);
+      styles = themeToTreeStyles(resolved);
+      treeStylesCache.set(name, styles);
+    }
+
+    if (currentTheme !== name) {
+      return;
+    }
+
+    for (const [property, value] of Object.entries(styles)) {
+      sidebar.style.setProperty(property.startsWith("--") ? property : camelToKebab(property), value);
+    }
+
+    // themeToTreeStyles sets background-color; clear the decorative gradient so
+    // the sidebar background is the theme's colour rather than a tinted blend.
+    sidebar.style.setProperty("background-image", "none");
+  } catch (error) {
+    console.error("Could not apply tree theme", name, error);
+  }
+}
+
+function camelToKebab(property: string) {
+  return property.replace(/[A-Z]/g, (match) => `-${match.toLowerCase()}`);
+}
+
 function mustFind<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
 
@@ -749,12 +810,8 @@ refreshInterval.addEventListener("change", () => {
   });
 });
 
-zoomOut.addEventListener("click", () => {
-  setUiZoomPercent(uiZoomPercent - zoomStepPercent);
-});
-
-zoomIn.addEventListener("click", () => {
-  setUiZoomPercent(uiZoomPercent + zoomStepPercent);
+themeSelect.addEventListener("change", () => {
+  setTheme(themeSelect.value);
 });
 
 zoomSelect.addEventListener("input", () => {
@@ -874,11 +931,13 @@ window.Differ = {
     applyAutoRefreshPreference(preferences.autoRefreshEnabled);
     setUiZoomPercent(preferences.uiZoomPercent, false);
     setSidebarWidthPoints(preferences.sidebarWidthPoints, false);
+    setTheme(preferences.theme, false);
   },
 };
 
 setAutoRefreshEnabled(true, false);
 setUiZoomPercent(defaultZoomPercent, false);
 setSidebarWidthPoints(defaultSidebarWidthPoints, false);
+setTheme(defaultTheme, false);
 render();
 postNative({ type: "web-ready" });

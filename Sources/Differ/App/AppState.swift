@@ -17,6 +17,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isAutoRefreshEnabled = true
     @Published private(set) var uiZoomPercent: Int
     @Published private(set) var sidebarWidthPoints: Int
+    @Published private(set) var themeName: String
 
     private let defaults: UserDefaults
     private var snapshotFingerprint: String?
@@ -37,6 +38,9 @@ final class AppState: ObservableObject {
 
         let storedSidebarWidth = defaults.integer(forKey: DefaultsKey.sidebarWidthPoints)
         self.sidebarWidthPoints = Self.clampedSidebarWidthPoints(storedSidebarWidth > 0 ? storedSidebarWidth : 300)
+
+        let storedTheme = defaults.string(forKey: DefaultsKey.themeName)
+        self.themeName = (storedTheme?.isEmpty == false) ? storedTheme! : Self.defaultThemeName
     }
 
     var selectedRepositoryDisplayName: String {
@@ -145,6 +149,16 @@ final class AppState: ObservableObject {
         defaults.set(clampedPoints, forKey: DefaultsKey.sidebarWidthPoints)
     }
 
+    func setTheme(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.isEmpty == false else {
+            return
+        }
+
+        themeName = trimmed
+        defaults.set(trimmed, forKey: DefaultsKey.themeName)
+    }
+
     func selectFile(path: String) async {
         guard let selectedRepositoryURL,
               let file = snapshot?.files.first(where: { $0.path == path })
@@ -183,6 +197,8 @@ final class AppState: ObservableObject {
     private static func clampedSidebarWidthPoints(_ points: Int) -> Int {
         min(2_000, max(140, points))
     }
+
+    private static let defaultThemeName = "pierre-dark"
 }
 
 private enum DefaultsKey {
@@ -190,6 +206,7 @@ private enum DefaultsKey {
     static let refreshIntervalMilliseconds = "refreshIntervalMilliseconds"
     static let uiZoomPercent = "uiZoomPercent"
     static let sidebarWidthPoints = "sidebarWidthPoints"
+    static let themeName = "themeName"
 }
 
 struct SelectedPatch: Equatable, Identifiable {

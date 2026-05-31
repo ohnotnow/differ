@@ -243,7 +243,8 @@ h1 {
 }
 
 .interval-control,
-.zoom-control {
+.zoom-control,
+.theme-control {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -252,8 +253,7 @@ h1 {
 }
 
 select,
-.button,
-.icon-button {
+.button {
   min-height: var(--control-height);
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -297,13 +297,15 @@ select {
   color: #d8d6cf;
 }
 
-.icon-button {
+.control-icon {
   display: inline-grid;
   place-items: center;
-  height: var(--control-height);
-  width: var(--control-height);
-  padding: 0;
-  font-weight: 800;
+  color: var(--text-muted);
+}
+
+.control-icon svg {
+  width: calc(15px * var(--ui-scale));
+  height: calc(15px * var(--ui-scale));
 }
 
 .zoom-select {
@@ -311,22 +313,16 @@ select {
   font-weight: 700;
 }
 
+.theme-select {
+  min-width: calc(120px * var(--ui-scale));
+  font-weight: 700;
+}
+
 .button:hover,
-.icon-button:hover,
-.zoom-select:hover {
+.zoom-select:hover,
+.theme-select:hover {
   border-color: rgba(118, 166, 184, 0.6);
   background: #2e343d;
-}
-
-.icon-button:disabled {
-  color: #747a84;
-  cursor: default;
-  opacity: 0.55;
-}
-
-.icon-button:disabled:hover {
-  border-color: var(--line);
-  background: #242830;
 }
 
 .diff-host {
