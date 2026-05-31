@@ -90,6 +90,7 @@ let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
 let uiZoomPercent = defaultZoomPercent;
 let autoRefreshEnabled = true;
+let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
 
 function render() {
@@ -595,8 +596,21 @@ function setAutoRefreshEnabled(enabled: boolean, notifyNative = true) {
   autoRefresh.setAttribute("aria-label", enabled ? "Turn off auto-refresh" : "Turn on auto-refresh");
 
   if (notifyNative) {
+    pendingAutoRefreshEnabled = enabled;
     postNative({ type: "set-auto-refresh", enabled });
   }
+}
+
+function applyAutoRefreshPreference(enabled: boolean) {
+  if (pendingAutoRefreshEnabled !== null) {
+    if (enabled !== pendingAutoRefreshEnabled) {
+      return;
+    }
+
+    pendingAutoRefreshEnabled = null;
+  }
+
+  setAutoRefreshEnabled(enabled, false);
 }
 
 function setUiZoomPercent(percent: number, notifyNative = true) {
@@ -774,7 +788,7 @@ window.Differ = {
   },
   applyPreferences(preferences) {
     refreshInterval.value = `${preferences.refreshIntervalMilliseconds}`;
-    setAutoRefreshEnabled(preferences.autoRefreshEnabled, false);
+    applyAutoRefreshPreference(preferences.autoRefreshEnabled);
     setUiZoomPercent(preferences.uiZoomPercent, false);
   },
 };

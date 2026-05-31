@@ -256,7 +256,15 @@ select {
 }
 
 .toggle-button[aria-pressed="false"] {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #1c2025;
   color: var(--text-muted);
+}
+
+.toggle-button[aria-pressed="false"]:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: #20252b;
+  color: #d8d6cf;
 }
 
 .icon-button {
