@@ -24,6 +24,7 @@ type DifferPreferences = {
   refreshIntervalMilliseconds: number;
   autoRefreshEnabled: boolean;
   uiZoomPercent: number;
+  sidebarWidthPoints: number;
 };
 
 type NativeMessage =
@@ -32,6 +33,7 @@ type NativeMessage =
   | { type: "set-auto-refresh"; enabled: boolean }
   | { type: "set-refresh-interval"; milliseconds: number }
   | { type: "set-ui-zoom"; percent: number }
+  | { type: "set-sidebar-width"; points: number }
   | { type: "web-ready" };
 
 declare global {
@@ -61,11 +63,19 @@ const treeHost = mustFind<HTMLElement>("#tree-host");
 const zoomIn = mustFind<HTMLButtonElement>("#zoom-in");
 const zoomOut = mustFind<HTMLButtonElement>("#zoom-out");
 const zoomSelect = mustFind<HTMLSelectElement>("#zoom-select");
+const appShell = mustFind<HTMLElement>("#app");
+const panelResizer = mustFind<HTMLElement>("#panel-resizer");
 
 const defaultZoomPercent = 100;
 const minimumZoomPercent = 80;
-const maximumZoomPercent = 180;
+const maximumZoomPercent = 200;
 const zoomStepPercent = 10;
+
+const defaultSidebarWidthPoints = 300;
+const minimumSidebarWidthPoints = 140;
+const maximumSidebarWidthPoints = 2000;
+const sidebarKeyboardStepPoints = 16;
+const reservedDiffRem = 18;
 
 const emptySnapshot: DifferSnapshot = {
   repositoryPath: "",
@@ -89,6 +99,7 @@ let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
 let uiZoomPercent = defaultZoomPercent;
+let sidebarWidthPoints = defaultSidebarWidthPoints;
 let autoRefreshEnabled = true;
 let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
@@ -688,6 +699,35 @@ function clampZoomPercent(percent: number) {
   return Math.min(maximumZoomPercent, Math.max(minimumZoomPercent, Math.round(percent / zoomStepPercent) * zoomStepPercent));
 }
 
+function setSidebarWidthPoints(points: number, notifyNative = true) {
+  const nextPoints = clampSidebarWidthPoints(points);
+  const didChange = nextPoints !== sidebarWidthPoints;
+
+  sidebarWidthPoints = nextPoints;
+  document.documentElement.style.setProperty("--sidebar-width-base", `${nextPoints}px`);
+
+  if (notifyNative && didChange) {
+    postNative({ type: "set-sidebar-width", points: nextPoints });
+  }
+}
+
+function clampSidebarWidthPoints(points: number) {
+  if (!Number.isFinite(points)) {
+    return defaultSidebarWidthPoints;
+  }
+
+  const scale = uiZoomPercent / 100;
+  const container = appShell.clientWidth || window.innerWidth;
+  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 13 * scale;
+
+  const minRendered = minimumSidebarWidthPoints * scale;
+  const maxRendered = Math.max(minRendered, container - reservedDiffRem * rootFontSize);
+  const rendered = Math.min(maxRendered, Math.max(minRendered, points * scale));
+  const logical = Math.round(rendered / scale);
+
+  return Math.min(maximumSidebarWidthPoints, Math.max(minimumSidebarWidthPoints, logical));
+}
+
 function mustFind<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
 
@@ -723,6 +763,49 @@ zoomSelect.addEventListener("input", () => {
 
 zoomSelect.addEventListener("change", () => {
   setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
+});
+
+panelResizer.addEventListener("pointerdown", (event) => {
+  if (event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  panelResizer.setPointerCapture(event.pointerId);
+  appShell.classList.add("resizing");
+
+  const onMove = (moveEvent: PointerEvent) => {
+    const scale = uiZoomPercent / 100;
+    const shellLeft = appShell.getBoundingClientRect().left;
+    setSidebarWidthPoints((moveEvent.clientX - shellLeft) / scale, false);
+  };
+
+  const onRelease = (releaseEvent: PointerEvent) => {
+    panelResizer.releasePointerCapture(releaseEvent.pointerId);
+    appShell.classList.remove("resizing");
+    panelResizer.removeEventListener("pointermove", onMove);
+    panelResizer.removeEventListener("pointerup", onRelease);
+    panelResizer.removeEventListener("pointercancel", onRelease);
+    postNative({ type: "set-sidebar-width", points: sidebarWidthPoints });
+  };
+
+  panelResizer.addEventListener("pointermove", onMove);
+  panelResizer.addEventListener("pointerup", onRelease);
+  panelResizer.addEventListener("pointercancel", onRelease);
+});
+
+panelResizer.addEventListener("dblclick", () => {
+  setSidebarWidthPoints(defaultSidebarWidthPoints);
+});
+
+panelResizer.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    setSidebarWidthPoints(sidebarWidthPoints - sidebarKeyboardStepPoints);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    setSidebarWidthPoints(sidebarWidthPoints + sidebarKeyboardStepPoints);
+  }
 });
 
 window.addEventListener("keydown", (event) => {
@@ -790,10 +873,12 @@ window.Differ = {
     refreshInterval.value = `${preferences.refreshIntervalMilliseconds}`;
     applyAutoRefreshPreference(preferences.autoRefreshEnabled);
     setUiZoomPercent(preferences.uiZoomPercent, false);
+    setSidebarWidthPoints(preferences.sidebarWidthPoints, false);
   },
 };
 
 setAutoRefreshEnabled(true, false);
 setUiZoomPercent(defaultZoomPercent, false);
+setSidebarWidthPoints(defaultSidebarWidthPoints, false);
 render();
 postNative({ type: "web-ready" });

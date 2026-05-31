@@ -108,10 +108,11 @@ struct DifferWebView: NSViewRepresentable {
                 }
                 .store(in: &cancellables)
 
-            Publishers.CombineLatest3(
+            Publishers.CombineLatest4(
                 appState.$refreshIntervalMilliseconds,
                 appState.$isAutoRefreshEnabled,
-                appState.$uiZoomPercent
+                appState.$uiZoomPercent,
+                appState.$sidebarWidthPoints
             )
                 .sink { [weak self] _ in
                     self?.sendPreferences()
@@ -168,6 +169,13 @@ struct DifferWebView: NSViewRepresentable {
                 }
 
                 appState.setUiZoomPercent(percent)
+
+            case "set-sidebar-width":
+                guard let points = intValue(from: message["points"]) else {
+                    return
+                }
+
+                appState.setSidebarWidth(points: points)
 
             default:
                 break
@@ -228,7 +236,8 @@ struct DifferWebView: NSViewRepresentable {
                     WebPreferences(
                         refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
                         autoRefreshEnabled: appState.isAutoRefreshEnabled,
-                        uiZoomPercent: appState.uiZoomPercent
+                        uiZoomPercent: appState.uiZoomPercent,
+                        sidebarWidthPoints: appState.sidebarWidthPoints
                     ),
                 ]
             )
@@ -274,4 +283,5 @@ private struct WebPreferences: Encodable {
     let refreshIntervalMilliseconds: Int
     let autoRefreshEnabled: Bool
     let uiZoomPercent: Int
+    let sidebarWidthPoints: Int
 }

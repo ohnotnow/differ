@@ -16,6 +16,7 @@ final class AppState: ObservableObject {
     @Published private(set) var refreshIntervalMilliseconds: Int
     @Published private(set) var isAutoRefreshEnabled = true
     @Published private(set) var uiZoomPercent: Int
+    @Published private(set) var sidebarWidthPoints: Int
 
     private let defaults: UserDefaults
     private var snapshotFingerprint: String?
@@ -33,6 +34,9 @@ final class AppState: ObservableObject {
 
         let storedZoomPercent = defaults.integer(forKey: DefaultsKey.uiZoomPercent)
         self.uiZoomPercent = Self.clampedZoomPercent(storedZoomPercent > 0 ? storedZoomPercent : 100)
+
+        let storedSidebarWidth = defaults.integer(forKey: DefaultsKey.sidebarWidthPoints)
+        self.sidebarWidthPoints = Self.clampedSidebarWidthPoints(storedSidebarWidth > 0 ? storedSidebarWidth : 300)
     }
 
     var selectedRepositoryDisplayName: String {
@@ -135,6 +139,12 @@ final class AppState: ObservableObject {
         defaults.set(clampedPercent, forKey: DefaultsKey.uiZoomPercent)
     }
 
+    func setSidebarWidth(points: Int) {
+        let clampedPoints = Self.clampedSidebarWidthPoints(points)
+        sidebarWidthPoints = clampedPoints
+        defaults.set(clampedPoints, forKey: DefaultsKey.sidebarWidthPoints)
+    }
+
     func selectFile(path: String) async {
         guard let selectedRepositoryURL,
               let file = snapshot?.files.first(where: { $0.path == path })
@@ -167,7 +177,11 @@ final class AppState: ObservableObject {
     }
 
     private static func clampedZoomPercent(_ percent: Int) -> Int {
-        min(180, max(80, percent))
+        min(200, max(80, percent))
+    }
+
+    private static func clampedSidebarWidthPoints(_ points: Int) -> Int {
+        min(2_000, max(140, points))
     }
 }
 
@@ -175,6 +189,7 @@ private enum DefaultsKey {
     static let selectedRepositoryPath = "selectedRepositoryPath"
     static let refreshIntervalMilliseconds = "refreshIntervalMilliseconds"
     static let uiZoomPercent = "uiZoomPercent"
+    static let sidebarWidthPoints = "sidebarWidthPoints"
 }
 
 struct SelectedPatch: Equatable, Identifiable {

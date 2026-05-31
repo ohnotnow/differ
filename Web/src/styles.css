@@ -20,6 +20,8 @@
   --tree-row-height: calc(30px * var(--ui-scale));
   --control-height: calc(30px * var(--ui-scale));
   --status-badge-size: calc(20px * var(--ui-scale));
+  --sidebar-width-base: 300px;
+  --resizer-size: 0.5rem;
   --diffs-font-size: var(--code-font-size);
   --diffs-line-height: var(--code-line-height);
   --trees-font-size-override: var(--ui-font-size);
@@ -48,11 +50,39 @@ select {
 
 .app-shell {
   display: grid;
-  grid-template-columns: minmax(calc(260px * var(--ui-scale)), calc(340px * var(--ui-scale))) minmax(0, 1fr);
+  grid-template-columns:
+    clamp(
+      calc(140px * var(--ui-scale)),
+      calc(var(--sidebar-width-base) * var(--ui-scale)),
+      calc(100% - 18rem)
+    )
+    var(--resizer-size)
+    minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
   background: #15171a;
+}
+
+.app-shell.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.panel-resizer {
+  align-self: stretch;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.panel-resizer:hover,
+.panel-resizer:focus-visible,
+.app-shell.resizing .panel-resizer {
+  background: rgba(118, 166, 184, 0.55);
+  outline: none;
 }
 
 .sidebar {
