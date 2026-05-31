@@ -22,13 +22,14 @@ type DifferSnapshot = {
 
 type DifferPreferences = {
   refreshIntervalMilliseconds: number;
+  autoRefreshEnabled: boolean;
   uiZoomPercent: number;
 };
 
 type NativeMessage =
   | { type: "select-file"; path: string }
   | { type: "select-all" }
-  | { type: "manual-refresh" }
+  | { type: "set-auto-refresh"; enabled: boolean }
   | { type: "set-refresh-interval"; milliseconds: number }
   | { type: "set-ui-zoom"; percent: number }
   | { type: "web-ready" };
@@ -54,7 +55,7 @@ const diffHost = mustFind<HTMLElement>("#diff-host");
 const fallbackFiles = mustFind<HTMLElement>("#fallback-files");
 const changeCount = mustFind<HTMLElement>("#change-count");
 const selectionTitle = mustFind<HTMLElement>("#selection-title");
-const manualRefresh = mustFind<HTMLButtonElement>("#manual-refresh");
+const autoRefresh = mustFind<HTMLButtonElement>("#auto-refresh");
 const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
 const zoomIn = mustFind<HTMLButtonElement>("#zoom-in");
@@ -88,6 +89,7 @@ let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
 let renderedViews: Array<{ cleanUp: () => void }> = [];
 let uiZoomPercent = defaultZoomPercent;
+let autoRefreshEnabled = true;
 let zoomReflowFrame: number | null = null;
 
 function render() {
@@ -586,6 +588,17 @@ function postNative(message: NativeMessage) {
   window.webkit?.messageHandlers?.differ?.postMessage(message);
 }
 
+function setAutoRefreshEnabled(enabled: boolean, notifyNative = true) {
+  autoRefreshEnabled = enabled;
+  autoRefresh.setAttribute("aria-pressed", `${enabled}`);
+  autoRefresh.title = enabled ? "Turn off auto-refresh" : "Turn on auto-refresh";
+  autoRefresh.setAttribute("aria-label", enabled ? "Turn off auto-refresh" : "Turn on auto-refresh");
+
+  if (notifyNative) {
+    postNative({ type: "set-auto-refresh", enabled });
+  }
+}
+
 function setUiZoomPercent(percent: number, notifyNative = true) {
   const nextZoomPercent = clampZoomPercent(percent);
   const didChange = nextZoomPercent !== uiZoomPercent;
@@ -671,8 +684,8 @@ function mustFind<T extends Element>(selector: string): T {
   return element;
 }
 
-manualRefresh.addEventListener("click", () => {
-  postNative({ type: "manual-refresh" });
+autoRefresh.addEventListener("click", () => {
+  setAutoRefreshEnabled(!autoRefreshEnabled);
 });
 
 refreshInterval.addEventListener("change", () => {
@@ -761,10 +774,12 @@ window.Differ = {
   },
   applyPreferences(preferences) {
     refreshInterval.value = `${preferences.refreshIntervalMilliseconds}`;
+    setAutoRefreshEnabled(preferences.autoRefreshEnabled, false);
     setUiZoomPercent(preferences.uiZoomPercent, false);
   },
 };
 
+setAutoRefreshEnabled(true, false);
 setUiZoomPercent(defaultZoomPercent, false);
 render();
 postNative({ type: "web-ready" });

@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var isLoading = false
     @Published private(set) var refreshIntervalMilliseconds: Int
+    @Published private(set) var isAutoRefreshEnabled = true
     @Published private(set) var uiZoomPercent: Int
 
     private let defaults: UserDefaults
@@ -45,7 +46,15 @@ final class AppState: ObservableObject {
     }
 
     func refreshSnapshot(showLoading: Bool = true) async {
+        await refreshSnapshot(showLoading: showLoading, requiresAutoRefresh: false)
+    }
+
+    private func refreshSnapshot(showLoading: Bool, requiresAutoRefresh: Bool) async {
         guard let selectedRepositoryURL else {
+            return
+        }
+
+        guard requiresAutoRefresh == false || isAutoRefreshEnabled else {
             return
         }
 
@@ -58,11 +67,21 @@ final class AppState: ObservableObject {
             isLoading = true
         }
         errorMessage = nil
+        defer {
+            isRefreshing = false
+            if showLoading {
+                isLoading = false
+            }
+        }
 
         do {
             let nextSnapshot = try await Task.detached(priority: .userInitiated) {
                 try GitSnapshotService().snapshot(for: selectedRepositoryURL)
             }.value
+
+            guard requiresAutoRefresh == false || isAutoRefreshEnabled else {
+                return
+            }
 
             let nextFingerprint = fingerprint(for: nextSnapshot)
             if nextFingerprint != snapshotFingerprint {
@@ -71,18 +90,17 @@ final class AppState: ObservableObject {
                 selectedPatch = nil
             }
         } catch {
-            errorMessage = error.localizedDescription
-        }
+            guard requiresAutoRefresh == false || isAutoRefreshEnabled else {
+                return
+            }
 
-        isRefreshing = false
-        if showLoading {
-            isLoading = false
+            errorMessage = error.localizedDescription
         }
     }
 
     func runPollingLoop() async {
         while Task.isCancelled == false {
-            await refreshSnapshot(showLoading: false)
+            await refreshSnapshot(showLoading: false, requiresAutoRefresh: true)
 
             let interval = UInt64(max(1_000, refreshIntervalMilliseconds))
             try? await Task.sleep(nanoseconds: interval * 1_000_000)
@@ -97,6 +115,18 @@ final class AppState: ObservableObject {
         let clampedMilliseconds = max(1_000, milliseconds)
         refreshIntervalMilliseconds = clampedMilliseconds
         defaults.set(clampedMilliseconds, forKey: DefaultsKey.refreshIntervalMilliseconds)
+    }
+
+    func setAutoRefreshEnabled(_ enabled: Bool) async {
+        guard isAutoRefreshEnabled != enabled else {
+            return
+        }
+
+        isAutoRefreshEnabled = enabled
+
+        if enabled {
+            await refreshSnapshot()
+        }
     }
 
     func setUiZoomPercent(_ percent: Int) {

@@ -108,8 +108,11 @@ struct DifferWebView: NSViewRepresentable {
                 }
                 .store(in: &cancellables)
 
-            appState.$refreshIntervalMilliseconds
-                .combineLatest(appState.$uiZoomPercent)
+            Publishers.CombineLatest3(
+                appState.$refreshIntervalMilliseconds,
+                appState.$isAutoRefreshEnabled,
+                appState.$uiZoomPercent
+            )
                 .sink { [weak self] _ in
                     self?.sendPreferences()
                 }
@@ -131,9 +134,13 @@ struct DifferWebView: NSViewRepresentable {
                     sendSnapshot(snapshot)
                 }
 
-            case "manual-refresh":
+            case "set-auto-refresh":
+                guard let enabled = boolValue(from: message["enabled"]) else {
+                    return
+                }
+
                 Task {
-                    await appState.refreshSnapshot()
+                    await appState.setAutoRefreshEnabled(enabled)
                 }
 
             case "select-all":
@@ -180,6 +187,19 @@ struct DifferWebView: NSViewRepresentable {
             }
         }
 
+        private func boolValue(from value: Any?) -> Bool? {
+            switch value {
+            case let bool as Bool:
+                return bool
+            case let number as NSNumber:
+                return number.boolValue
+            case let string as String:
+                return Bool(string)
+            default:
+                return nil
+            }
+        }
+
         private func sendSnapshot(_ snapshot: GitSnapshot) {
             guard isWebReady else {
                 return
@@ -207,6 +227,7 @@ struct DifferWebView: NSViewRepresentable {
                 arguments: [
                     WebPreferences(
                         refreshIntervalMilliseconds: appState.refreshIntervalMilliseconds,
+                        autoRefreshEnabled: appState.isAutoRefreshEnabled,
                         uiZoomPercent: appState.uiZoomPercent
                     ),
                 ]
@@ -251,5 +272,6 @@ private struct AnyEncodable: Encodable {
 
 private struct WebPreferences: Encodable {
     let refreshIntervalMilliseconds: Int
+    let autoRefreshEnabled: Bool
     let uiZoomPercent: Int
 }

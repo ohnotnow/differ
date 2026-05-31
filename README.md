@@ -10,7 +10,7 @@ It opens a local repository, polls `git status` and `git diff`, and renders the 
 
 Differ is built as a Swift package. The native shell owns the macOS window, repository picker, menu shortcuts, persisted preferences, and Git calls. The diff UI is a bundled TypeScript/Vite web view using `@pierre/diffs` and `@pierre/trees`.
 
-The app shows all current working tree changes by default. You can select one file to focus the diff, refresh manually, adjust the polling interval, and change the UI zoom. Untracked text files are rendered as new-file patches when they are small enough to preview. Large patches are skipped rather than pushed through the web view.
+The app shows all current working tree changes by default. You can select one file to focus the diff, pause and resume auto-refresh, adjust the polling interval, and change the UI zoom. Untracked text files are rendered as new-file patches when they are small enough to preview. Large patches are skipped rather than pushed through the web view.
 
 ## Prerequisites
 

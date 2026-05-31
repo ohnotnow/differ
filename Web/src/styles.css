@@ -239,6 +239,26 @@ select {
   padding: 5px 10px;
 }
 
+.toggle-button {
+  min-width: calc(54px * var(--ui-scale));
+  font-weight: 700;
+}
+
+.toggle-button[aria-pressed="true"] {
+  border-color: rgba(118, 166, 184, 0.75);
+  background: #2f5e70;
+  color: #ffffff;
+}
+
+.toggle-button[aria-pressed="true"]:hover {
+  border-color: rgba(143, 190, 207, 0.9);
+  background: #376d80;
+}
+
+.toggle-button[aria-pressed="false"] {
+  color: var(--text-muted);
+}
+
 .icon-button {
   display: inline-grid;
   place-items: center;
