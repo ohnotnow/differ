@@ -63,7 +63,9 @@ const autoRefresh = mustFind<HTMLButtonElement>("#auto-refresh");
 const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
 const zoomSelect = mustFind<HTMLSelectElement>("#zoom-select");
-const themeSelect = mustFind<HTMLSelectElement>("#theme-select");
+const themeButton = mustFind<HTMLButtonElement>("#theme-button");
+const themeMenu = mustFind<HTMLElement>("#theme-menu");
+const themeMenuItems = Array.from(themeMenu.querySelectorAll<HTMLButtonElement>(".theme-menu-item"));
 const sidebar = mustFind<HTMLElement>(".sidebar");
 const appShell = mustFind<HTMLElement>("#app");
 const panelResizer = mustFind<HTMLElement>("#panel-resizer");
@@ -746,42 +748,90 @@ function setTheme(name: string, notifyNative = true) {
   const didChange = nextTheme !== currentTheme;
 
   currentTheme = nextTheme;
-  themeSelect.value = nextTheme;
-
-  void applyTreeTheme(nextTheme);
-
-  if (didChange) {
-    renderDiff(currentDiffFiles);
-  }
+  syncThemeMenu();
 
   if (notifyNative && didChange) {
     postNative({ type: "set-theme", theme: nextTheme });
   }
+
+  // Shiki loads themes lazily, so painting immediately would use the previously
+  // resolved theme — the "one click behind" bug. Resolve first, then render.
+  void applyTheme(nextTheme, didChange);
 }
 
-async function applyTreeTheme(name: string) {
-  try {
-    let styles = treeStylesCache.get(name);
+function syncThemeMenu() {
+  for (const item of themeMenuItems) {
+    const selected = item.dataset.theme === currentTheme;
+    item.setAttribute("aria-checked", `${selected}`);
 
-    if (!styles) {
+    const check = item.querySelector<HTMLElement>(".theme-menu-check");
+    if (check) {
+      check.textContent = selected ? "✓" : "";
+    }
+
+    if (selected) {
+      themeButton.title = `Theme: ${item.textContent?.trim() ?? currentTheme}`;
+    }
+  }
+}
+
+function openThemeMenu() {
+  themeMenu.hidden = false;
+  themeButton.setAttribute("aria-expanded", "true");
+  document.addEventListener("pointerdown", onThemeMenuOutsidePointer, true);
+  document.addEventListener("keydown", onThemeMenuKeydown, true);
+}
+
+function closeThemeMenu() {
+  themeMenu.hidden = true;
+  themeButton.setAttribute("aria-expanded", "false");
+  document.removeEventListener("pointerdown", onThemeMenuOutsidePointer, true);
+  document.removeEventListener("keydown", onThemeMenuKeydown, true);
+}
+
+function onThemeMenuOutsidePointer(event: PointerEvent) {
+  const target = event.target as Node;
+  if (!themeMenu.contains(target) && !themeButton.contains(target)) {
+    closeThemeMenu();
+  }
+}
+
+function onThemeMenuKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    closeThemeMenu();
+    themeButton.focus();
+  }
+}
+
+async function applyTheme(name: string, renderDiffViews: boolean) {
+  let styles = treeStylesCache.get(name);
+
+  if (!styles) {
+    try {
       const resolved = await resolveTheme(name);
       styles = themeToTreeStyles(resolved);
       treeStylesCache.set(name, styles);
-    }
-
-    if (currentTheme !== name) {
+    } catch (error) {
+      console.error("Could not resolve theme", name, error);
       return;
     }
+  }
 
-    for (const [property, value] of Object.entries(styles)) {
-      sidebar.style.setProperty(property.startsWith("--") ? property : camelToKebab(property), value);
-    }
+  // A newer selection superseded this one while it was resolving.
+  if (currentTheme !== name) {
+    return;
+  }
 
-    // themeToTreeStyles sets background-color; clear the decorative gradient so
-    // the sidebar background is the theme's colour rather than a tinted blend.
-    sidebar.style.setProperty("background-image", "none");
-  } catch (error) {
-    console.error("Could not apply tree theme", name, error);
+  for (const [property, value] of Object.entries(styles)) {
+    sidebar.style.setProperty(property.startsWith("--") ? property : camelToKebab(property), value);
+  }
+
+  // themeToTreeStyles sets background-color; clear the decorative gradient so the
+  // sidebar background is the theme's colour rather than a tinted blend.
+  sidebar.style.setProperty("background-image", "none");
+
+  if (renderDiffViews) {
+    renderDiff(currentDiffFiles);
   }
 }
 
@@ -810,9 +860,25 @@ refreshInterval.addEventListener("change", () => {
   });
 });
 
-themeSelect.addEventListener("change", () => {
-  setTheme(themeSelect.value);
+themeButton.addEventListener("click", () => {
+  if (themeMenu.hidden) {
+    openThemeMenu();
+  } else {
+    closeThemeMenu();
+  }
 });
+
+for (const item of themeMenuItems) {
+  item.addEventListener("click", () => {
+    const name = item.dataset.theme;
+    if (name) {
+      setTheme(name);
+    }
+
+    closeThemeMenu();
+    themeButton.focus();
+  });
+}
 
 zoomSelect.addEventListener("input", () => {
   setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
