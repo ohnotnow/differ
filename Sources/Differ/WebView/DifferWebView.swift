@@ -1,5 +1,6 @@
 import Combine
 import DifferCore
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -196,9 +197,22 @@ struct DifferWebView: NSViewRepresentable {
 
                 appState.setTheme(theme)
 
+            case "copy-to-clipboard":
+                guard let text = message["text"] as? String else {
+                    return
+                }
+
+                copyToClipboard(text)
+
             default:
                 break
             }
+        }
+
+        private func copyToClipboard(_ text: String) {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
         }
 
         private func intValue(from value: Any?) -> Int? {

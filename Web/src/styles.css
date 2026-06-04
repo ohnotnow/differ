@@ -406,6 +406,63 @@ select {
   padding: 14px;
 }
 
+.copy-selection-button {
+  display: inline-grid;
+  place-items: center;
+  width: 1lh;
+  height: 1lh;
+  margin-right: calc(1ch - 1lh);
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #101418;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.copy-selection-button:hover,
+.copy-selection-button:focus-visible {
+  background: #9bc6d4;
+  outline: none;
+}
+
+.copy-selection-button svg {
+  width: 0.78lh;
+  height: 0.78lh;
+}
+
+.copy-selection-menu {
+  position: fixed;
+  z-index: 60;
+  display: grid;
+  gap: 2px;
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #20242b;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.52);
+}
+
+.copy-selection-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #f2efe6;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.copy-selection-menu-item:hover,
+.copy-selection-menu-item:focus-visible {
+  background: rgba(118, 166, 184, 0.18);
+  outline: none;
+}
+
 .file-diff-frame + .file-diff-frame,
 .file-diff-frame + .diff-notice,
 .file-diff-frame + .file-preview-frame,

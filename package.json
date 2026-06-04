@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build:web": "vite build --config Web/vite.config.mjs"
+    "build:web": "vite build --config Web/vite.config.mjs",
+    "test:web": "node --no-warnings --experimental-strip-types --test Web/tests/*.test.ts"
   },
   "dependencies": {
     "@pierre/diffs": "latest",

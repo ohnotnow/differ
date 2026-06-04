@@ -1,5 +1,15 @@
-import { File as FileView, FileDiff, parsePatchFiles, resolveTheme, type FileContents, type FileDiffMetadata } from "@pierre/diffs";
+import {
+  File as FileView,
+  FileDiff,
+  parsePatchFiles,
+  resolveTheme,
+  type FileContents,
+  type FileDiffMetadata,
+  type SelectedLineRange,
+  type SelectionSide,
+} from "@pierre/diffs";
 import { FileTree, themeToTreeStyles, type GitStatusEntry, type TreeThemeStyles } from "@pierre/trees";
+import { formatDiffSelection, type DiffSelectionCopyMode } from "./selectionCopy";
 import "./styles.css";
 
 type FileStatus = "added" | "modified" | "deleted" | "renamed" | "copied" | "untracked" | "ignored" | "conflicted" | "mixed";
@@ -36,7 +46,27 @@ type NativeMessage =
   | { type: "set-ui-zoom"; percent: number }
   | { type: "set-sidebar-width"; points: number }
   | { type: "set-theme"; theme: string }
+  | { type: "copy-to-clipboard"; text: string }
   | { type: "web-ready" };
+
+type RenderedView = {
+  cleanUp: () => void;
+  setSelectedLines?: (range: SelectedLineRange | null, options?: { notify?: boolean }) => void;
+};
+
+type DiffSelectionPoint = {
+  lineNumber: number;
+  side: SelectionSide;
+};
+
+type NativeSelectionLine = DiffSelectionPoint & {
+  rowIndex: number;
+};
+
+type ActiveDiffSelection = {
+  fileDiff: FileDiffMetadata;
+  range: SelectedLineRange;
+};
 
 declare global {
   interface Window {
@@ -112,7 +142,7 @@ const focusedPatchCache = new Map<string, FileDiffMetadata[]>();
 let syncingTreeSelection = false;
 let treeSyncGeneration = 0;
 let renderedTreeDataKey: string | null = null;
-let renderedViews: Array<{ cleanUp: () => void }> = [];
+let renderedViews: RenderedView[] = [];
 let uiZoomPercent = defaultZoomPercent;
 let sidebarWidthPoints = defaultSidebarWidthPoints;
 let currentTheme = defaultTheme;
@@ -120,6 +150,8 @@ const treeStylesCache = new Map<string, TreeThemeStyles>();
 let autoRefreshEnabled = true;
 let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
+let activeDiffSelection: ActiveDiffSelection | null = null;
+let copyMenu: HTMLElement | null = null;
 
 function render() {
   changeCount.textContent = hasNativeSnapshot
@@ -414,11 +446,27 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
     frame.className = "file-diff-frame";
     diffHost.append(frame);
 
-    const view = new FileDiff({
+    let view: FileDiff;
+    view = new FileDiff({
       theme: currentTheme,
       diffStyle: "unified",
       hunkSeparators: "line-info-basic",
       overflow: "scroll",
+      enableLineSelection: true,
+      enableGutterUtility: true,
+      renderGutterUtility(getHoveredRow) {
+        return copySelectionButton(fileDiff, () => rangeForCopyAction(fileDiff, frame, getHoveredRow));
+      },
+      onLineSelectionStart(range) {
+        clearOtherDiffSelections(view);
+        setActiveDiffSelection(fileDiff, range);
+      },
+      onLineSelectionChange(range) {
+        setActiveDiffSelection(fileDiff, range);
+      },
+      onLineSelected(range) {
+        setActiveDiffSelection(fileDiff, range);
+      },
     });
 
     renderedViews.push(view);
@@ -437,6 +485,268 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
   }
 }
 
+function copySelectionButton(fileDiff: FileDiffMetadata, range: () => SelectedLineRange | null) {
+  const button = document.createElement("button");
+  button.className = "copy-selection-button";
+  button.type = "button";
+  button.title = "Copy selected lines";
+  button.setAttribute("aria-label", "Copy selected lines");
+  button.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M8 7.75A2.75 2.75 0 0 1 10.75 5h5.5A2.75 2.75 0 0 1 19 7.75v8.5A2.75 2.75 0 0 1 16.25 19h-5.5A2.75 2.75 0 0 1 8 16.25v-8.5Z" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M6.25 15.25H6A2.75 2.75 0 0 1 3.25 12.5v-7A2.75 2.75 0 0 1 6 2.75h4.5A2.75 2.75 0 0 1 13.25 5.5V6" />
+    </svg>
+  `;
+
+  button.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const selectedRange = range();
+    if (selectedRange) {
+      openCopyMenu(button, fileDiff, selectedRange);
+    }
+  });
+
+  return button;
+}
+
+function rangeForCopyAction(
+  fileDiff: FileDiffMetadata,
+  frame: HTMLElement,
+  getHoveredRow: () => DiffSelectionPoint | undefined,
+): SelectedLineRange | null {
+  const nativeSelectionRange = rangeFromNativeSelection(frame);
+
+  if (nativeSelectionRange) {
+    return nativeSelectionRange;
+  }
+
+  if (activeDiffSelection?.fileDiff === fileDiff) {
+    return activeDiffSelection.range;
+  }
+
+  const hoveredRow = getHoveredRow();
+
+  if (!hoveredRow) {
+    return null;
+  }
+
+  return {
+    start: hoveredRow.lineNumber,
+    side: hoveredRow.side,
+    end: hoveredRow.lineNumber,
+    endSide: hoveredRow.side,
+  };
+}
+
+function rangeFromNativeSelection(frame: HTMLElement): SelectedLineRange | null {
+  const selection = window.getSelection();
+
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+    return null;
+  }
+
+  const selectedLines: NativeSelectionLine[] = [];
+
+  for (const container of frame.querySelectorAll<HTMLElement>("diffs-container")) {
+    const shadowRoot = container.shadowRoot;
+
+    if (!shadowRoot) {
+      continue;
+    }
+
+    for (const lineElement of shadowRoot.querySelectorAll<HTMLElement>("[data-line][data-line-index]")) {
+      if (!selectionIntersectsElement(selection, lineElement)) {
+        continue;
+      }
+
+      const line = nativeSelectionLine(lineElement);
+
+      if (line) {
+        selectedLines.push(line);
+      }
+    }
+  }
+
+  if (selectedLines.length === 0) {
+    return null;
+  }
+
+  selectedLines.sort((left, right) => left.rowIndex - right.rowIndex);
+  const start = selectedLines[0];
+  const end = selectedLines.at(-1);
+
+  if (!start || !end) {
+    return null;
+  }
+
+  return {
+    start: start.lineNumber,
+    side: start.side,
+    end: end.lineNumber,
+    endSide: end.side,
+  };
+}
+
+function selectionIntersectsElement(selection: Selection, element: HTMLElement) {
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+
+    try {
+      if (range.intersectsNode(element)) {
+        return true;
+      }
+    } catch {
+      // A selection can cross document/shadow boundaries. Ignore ranges that
+      // cannot be compared with this rendered diff row.
+    }
+  }
+
+  return false;
+}
+
+function nativeSelectionLine(lineElement: HTMLElement): NativeSelectionLine | null {
+  const lineNumber = Number.parseInt(lineElement.dataset.line ?? "", 10);
+  const lineIndex = firstLineIndex(lineElement.dataset.lineIndex);
+
+  if (!Number.isFinite(lineNumber) || !Number.isFinite(lineIndex)) {
+    return null;
+  }
+
+  return {
+    lineNumber,
+    rowIndex: lineIndex,
+    side: sideForLineElement(lineElement),
+  };
+}
+
+function firstLineIndex(value: string | undefined) {
+  const [first] = value?.split(",") ?? [];
+  return Number.parseInt(first ?? "", 10);
+}
+
+function sideForLineElement(lineElement: HTMLElement): SelectionSide {
+  return lineElement.dataset.lineType === "change-deletion" ? "deletions" : "additions";
+}
+
+function openCopyMenu(anchor: HTMLElement, fileDiff: FileDiffMetadata, range: SelectedLineRange) {
+  closeCopyMenu();
+
+  const menu = document.createElement("div");
+  menu.className = "copy-selection-menu";
+  menu.setAttribute("role", "menu");
+  menu.append(
+    copyMenuItem("Copy reference", "reference", fileDiff, range),
+    copyMenuItem("Copy reference + contents", "reference-with-contents", fileDiff, range),
+  );
+  document.body.append(menu);
+  copyMenu = menu;
+  positionCopyMenu(menu, anchor);
+  document.addEventListener("pointerdown", onCopyMenuOutsidePointer, true);
+  document.addEventListener("keydown", onCopyMenuKeydown, true);
+}
+
+function copyMenuItem(label: string, mode: DiffSelectionCopyMode, fileDiff: FileDiffMetadata, range: SelectedLineRange) {
+  const button = document.createElement("button");
+  button.className = "copy-selection-menu-item";
+  button.type = "button";
+  button.setAttribute("role", "menuitem");
+  button.textContent = label;
+  button.addEventListener("click", () => {
+    copyDiffSelection(fileDiff, range, mode);
+  });
+
+  return button;
+}
+
+function positionCopyMenu(menu: HTMLElement, anchor: HTMLElement) {
+  const rect = anchor.getBoundingClientRect();
+  const margin = 8;
+  const left = Math.max(margin, Math.min(rect.right + 6, window.innerWidth - menu.offsetWidth - margin));
+  const top = Math.max(margin, Math.min(rect.top, window.innerHeight - menu.offsetHeight - margin));
+
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeCopyMenu() {
+  if (!copyMenu) {
+    return;
+  }
+
+  copyMenu.remove();
+  copyMenu = null;
+  document.removeEventListener("pointerdown", onCopyMenuOutsidePointer, true);
+  document.removeEventListener("keydown", onCopyMenuKeydown, true);
+}
+
+function onCopyMenuOutsidePointer(event: PointerEvent) {
+  const target = event.target as Node;
+
+  if (copyMenu && !copyMenu.contains(target)) {
+    closeCopyMenu();
+  }
+}
+
+function onCopyMenuKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    closeCopyMenu();
+  }
+}
+
+function copyDiffSelection(fileDiff: FileDiffMetadata, range: SelectedLineRange, mode: DiffSelectionCopyMode) {
+  const text = formatDiffSelection(fileDiff, range, mode);
+
+  if (!text) {
+    closeCopyMenu();
+    return;
+  }
+
+  copyTextToClipboard(text);
+  closeCopyMenu();
+}
+
+function copyTextToClipboard(text: string) {
+  if (window.webkit?.messageHandlers?.differ) {
+    postNative({ type: "copy-to-clipboard", text });
+    return;
+  }
+
+  void navigator.clipboard?.writeText(text).catch((error) => {
+    console.error("Could not copy selected diff reference", error);
+  });
+}
+
+function setActiveDiffSelection(fileDiff: FileDiffMetadata, range: SelectedLineRange | null) {
+  if (range) {
+    activeDiffSelection = { fileDiff, range };
+    return;
+  }
+
+  if (activeDiffSelection?.fileDiff === fileDiff) {
+    activeDiffSelection = null;
+    closeCopyMenu();
+  }
+}
+
+function clearOtherDiffSelections(activeView: RenderedView) {
+  for (const view of renderedViews) {
+    if (view !== activeView) {
+      view.setSelectedLines?.(null, { notify: false });
+    }
+  }
+}
+
+function clearDiffSelectionState() {
+  activeDiffSelection = null;
+  closeCopyMenu();
+}
+
 function emptyState(message: string) {
   const empty = document.createElement("div");
   empty.className = "empty-state";
@@ -445,6 +755,8 @@ function emptyState(message: string) {
 }
 
 function cleanRenderedViews() {
+  clearDiffSelectionState();
+
   for (const view of renderedViews) {
     view.cleanUp();
   }
