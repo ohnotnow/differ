@@ -1043,16 +1043,14 @@ function clampSidebarWidthPoints(points: number) {
     return defaultSidebarWidthPoints;
   }
 
-  const scale = uiZoomPercent / 100;
   const container = appShell.clientWidth || window.innerWidth;
-  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 13 * scale;
+  const rootFontSize = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 13;
 
-  const minRendered = minimumSidebarWidthPoints * scale;
+  const minRendered = minimumSidebarWidthPoints;
   const maxRendered = Math.max(minRendered, container - reservedDiffRem * rootFontSize);
-  const rendered = Math.min(maxRendered, Math.max(minRendered, points * scale));
-  const logical = Math.round(rendered / scale);
+  const rendered = Math.min(maxRendered, Math.max(minRendered, points));
 
-  return Math.min(maximumSidebarWidthPoints, Math.max(minimumSidebarWidthPoints, logical));
+  return Math.min(maximumSidebarWidthPoints, Math.max(minimumSidebarWidthPoints, Math.round(rendered)));
 }
 
 function setTheme(name: string, notifyNative = true) {
@@ -1210,9 +1208,8 @@ panelResizer.addEventListener("pointerdown", (event) => {
   appShell.classList.add("resizing");
 
   const onMove = (moveEvent: PointerEvent) => {
-    const scale = uiZoomPercent / 100;
     const shellLeft = appShell.getBoundingClientRect().left;
-    setSidebarWidthPoints((moveEvent.clientX - shellLeft) / scale, false);
+    setSidebarWidthPoints(moveEvent.clientX - shellLeft, false);
   };
 
   const onRelease = (releaseEvent: PointerEvent) => {

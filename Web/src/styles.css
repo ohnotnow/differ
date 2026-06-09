@@ -52,8 +52,8 @@ select {
   display: grid;
   grid-template-columns:
     clamp(
-      calc(140px * var(--ui-scale)),
-      calc(var(--sidebar-width-base) * var(--ui-scale)),
+      140px,
+      var(--sidebar-width-base),
       calc(100% - 18rem)
     )
     var(--resizer-size)
