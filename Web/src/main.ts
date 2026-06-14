@@ -36,6 +36,7 @@ type DifferPreferences = {
   uiZoomPercent: number;
   sidebarWidthPoints: number;
   theme: string;
+  hiddenAllChangesPaths?: string[];
 };
 
 type NativeMessage =
@@ -46,6 +47,7 @@ type NativeMessage =
   | { type: "set-ui-zoom"; percent: number }
   | { type: "set-sidebar-width"; points: number }
   | { type: "set-theme"; theme: string }
+  | { type: "set-all-changes-path-hidden"; path: string; hidden: boolean }
   | { type: "copy-to-clipboard"; text: string }
   | { type: "web-ready" };
 
@@ -137,7 +139,7 @@ let currentDiffFiles = allDiffFiles;
 
 let tree: FileTree | null = null;
 let renderedFileListKey: string | null = null;
-const fileRowCache = new Map<string, HTMLButtonElement>();
+const fileRowCache = new Map<string, HTMLDivElement>();
 const focusedPatchCache = new Map<string, FileDiffMetadata[]>();
 let syncingTreeSelection = false;
 let treeSyncGeneration = 0;
@@ -148,14 +150,18 @@ let sidebarWidthPoints = defaultSidebarWidthPoints;
 let currentTheme = defaultTheme;
 const treeStylesCache = new Map<string, TreeThemeStyles>();
 let autoRefreshEnabled = true;
+let hiddenAllChangesPaths = new Set<string>();
 let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
 let activeDiffSelection: ActiveDiffSelection | null = null;
 let copyMenu: HTMLElement | null = null;
 
 function render() {
+  const hiddenCount = hiddenChangedFiles().length;
   changeCount.textContent = hasNativeSnapshot
-    ? `${snapshot.files.length} ${snapshot.files.length === 1 ? "change" : "changes"}`
+    ? `${snapshot.files.length} ${snapshot.files.length === 1 ? "change" : "changes"}${
+        hiddenCount > 0 ? `, ${hiddenCount} hidden` : ""
+      }`
     : "Waiting";
   selectionTitle.textContent = hasNativeSnapshot ? selectedPath ?? "All changes" : "Waiting for repository snapshot";
 
@@ -201,13 +207,13 @@ function renderFallbackFiles() {
 
   const allChangesRow = fileRowCache.get("__all__");
   if (allChangesRow) {
-    updateFileButton(allChangesRow, { path: "All changes", status: "mixed" }, selectedPath === null);
+    updateFileRow(allChangesRow, { path: "All changes", status: "mixed" }, selectedPath === null, false);
   }
 
   for (const file of snapshot.files) {
-    const button = fileRowCache.get(file.path);
-    if (button) {
-      updateFileButton(button, file, selectedPath === file.path);
+    const row = fileRowCache.get(file.path);
+    if (row) {
+      updateFileRow(row, file, selectedPath === file.path, isHiddenFromAllChanges(file.path));
     }
   }
   syncFileRowSelection();
@@ -226,29 +232,36 @@ function clearFallbackFiles() {
 }
 
 function buttonForFileRow(key: string, file: Pick<ChangedFile, "path" | "status">, selected: boolean) {
-  let button = fileRowCache.get(key);
+  let row = fileRowCache.get(key);
 
-  if (!button) {
-    button = createFileButton(file, () => {
+  if (!row) {
+    row = createFileRow(file, () => {
       if (key === "__all__") {
         selectAllChanges();
         return;
       }
 
       selectPath(key);
-    });
-    fileRowCache.set(key, button);
+    }, key === "__all__" ? null : () => toggleAllChangesPathHidden(key));
+    fileRowCache.set(key, row);
   }
 
-  updateFileButton(button, file, selected);
-  return button;
+  updateFileRow(row, file, selected, key !== "__all__" && isHiddenFromAllChanges(key));
+  return row;
 }
 
-function createFileButton(file: Pick<ChangedFile, "path" | "status">, onClick: () => void) {
-  const button = document.createElement("button");
-  button.className = "file-row";
-  button.type = "button";
-  button.addEventListener("click", onClick);
+function createFileRow(
+  file: Pick<ChangedFile, "path" | "status">,
+  onSelect: () => void,
+  onToggleHidden: (() => void) | null,
+) {
+  const row = document.createElement("div");
+  row.className = "file-row";
+
+  const selectButton = document.createElement("button");
+  selectButton.className = "file-row-main";
+  selectButton.type = "button";
+  selectButton.addEventListener("click", onSelect);
 
   const badge = document.createElement("span");
   badge.className = "status-badge";
@@ -256,19 +269,49 @@ function createFileButton(file: Pick<ChangedFile, "path" | "status">, onClick: (
   const path = document.createElement("span");
   path.className = "file-path";
 
-  button.append(badge, path);
-  updateFileButton(button, file, false);
-  return button;
+  selectButton.append(badge, path);
+  row.append(selectButton);
+
+  if (onToggleHidden) {
+    const visibilityButton = document.createElement("button");
+    visibilityButton.className = "file-row-visibility";
+    visibilityButton.type = "button";
+    visibilityButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      onToggleHidden();
+    });
+    row.append(visibilityButton);
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "file-row-visibility-spacer";
+    spacer.setAttribute("aria-hidden", "true");
+    row.append(spacer);
+  }
+
+  updateFileRow(row, file, false, false);
+  return row;
 }
 
-function updateFileButton(button: HTMLButtonElement, file: Pick<ChangedFile, "path" | "status">, selected: boolean) {
-  const title = file.path === "All changes" ? "All changed files" : `${statusTitle(file.status)}: ${file.path}`;
-  const badge = button.querySelector<HTMLElement>(".status-badge");
-  const path = button.querySelector<HTMLElement>(".file-path");
+function updateFileRow(row: HTMLDivElement, file: Pick<ChangedFile, "path" | "status">, selected: boolean, hidden: boolean) {
+  const hiddenCount = hiddenChangedFiles().length;
+  const title =
+    file.path === "All changes"
+      ? hiddenCount > 0
+        ? `All changed files, ${hiddenCount} hidden`
+        : "All changed files"
+      : `${statusTitle(file.status)}: ${file.path}`;
+  const selectButton = row.querySelector<HTMLButtonElement>(".file-row-main");
+  const visibilityButton = row.querySelector<HTMLButtonElement>(".file-row-visibility");
+  const badge = row.querySelector<HTMLElement>(".status-badge");
+  const path = row.querySelector<HTMLElement>(".file-path");
 
-  button.classList.toggle("selected", selected);
-  button.title = title;
-  button.setAttribute("aria-label", title);
+  row.classList.toggle("selected", selected);
+  row.classList.toggle("hidden-from-all", hidden);
+
+  if (selectButton) {
+    selectButton.title = title;
+    selectButton.setAttribute("aria-label", title);
+  }
 
   if (badge) {
     badge.className = `status-badge ${file.status}`;
@@ -281,19 +324,29 @@ function updateFileButton(button: HTMLButtonElement, file: Pick<ChangedFile, "pa
     path.textContent = file.path;
     path.title = file.path;
   }
+
+  if (visibilityButton) {
+    const label = hidden ? `Show ${file.path} in All changes` : `Hide ${file.path} from All changes`;
+    visibilityButton.title = label;
+    visibilityButton.setAttribute("aria-label", label);
+    visibilityButton.setAttribute("aria-pressed", `${hidden}`);
+    visibilityButton.innerHTML = visibilityIcon(hidden);
+  }
 }
 
 function syncFileRowSelection() {
   fileRowCache.get("__all__")?.classList.toggle("selected", selectedPath === null);
 
   for (const file of snapshot.files) {
-    fileRowCache.get(file.path)?.classList.toggle("selected", selectedPath === file.path);
+    const row = fileRowCache.get(file.path);
+    row?.classList.toggle("selected", selectedPath === file.path);
+    row?.classList.toggle("hidden-from-all", isHiddenFromAllChanges(file.path));
   }
 }
 
 function selectAllChanges(notifyNative = true) {
   selectedPath = null;
-  currentDiffFiles = allDiffFiles;
+  currentDiffFiles = diffFilesForAllChanges();
 
   if (notifyNative) {
     postNative({ type: "select-all" });
@@ -320,6 +373,83 @@ function selectPath(path: string, notifyNative = true) {
 
 function diffFilesForChangedFile(file: ChangedFile) {
   return allDiffFiles.filter((fileDiff) => diffMatchesChangedFile(fileDiff, file));
+}
+
+function diffFilesForAllChanges() {
+  const hiddenFiles = hiddenChangedFiles();
+
+  if (hiddenFiles.length === 0) {
+    return allDiffFiles;
+  }
+
+  return allDiffFiles.filter((fileDiff) => {
+    return hiddenFiles.some((file) => diffMatchesChangedFile(fileDiff, file)) === false;
+  });
+}
+
+function toggleAllChangesPathHidden(path: string) {
+  const hidden = !isHiddenFromAllChanges(path);
+
+  if (hidden) {
+    hiddenAllChangesPaths.add(path);
+  } else {
+    hiddenAllChangesPaths.delete(path);
+  }
+
+  if (selectedPath === null) {
+    currentDiffFiles = diffFilesForAllChanges();
+  }
+
+  postNative({ type: "set-all-changes-path-hidden", path, hidden });
+  render();
+}
+
+function applyHiddenAllChangesPaths(paths: string[], renderNow = true) {
+  hiddenAllChangesPaths = normalizedPathSet(paths);
+
+  if (selectedPath === null) {
+    currentDiffFiles = diffFilesForAllChanges();
+  }
+
+  if (renderNow) {
+    render();
+  }
+}
+
+function hiddenChangedFiles() {
+  return snapshot.files.filter((file) => isHiddenFromAllChanges(file.path));
+}
+
+function includedChangedFilesForAllChanges() {
+  return snapshot.files.filter((file) => isHiddenFromAllChanges(file.path) === false);
+}
+
+function isHiddenFromAllChanges(path: string) {
+  return hiddenAllChangesPaths.has(path);
+}
+
+function normalizedPathSet(paths: string[]) {
+  return new Set(paths.map((path) => path.trim()).filter((path) => path.length > 0));
+}
+
+function visibilityIcon(hidden: boolean) {
+  if (hidden) {
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3 3l18 18" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10.58 10.58A2 2 0 0 0 13.42 13.4" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.88 5.1A9.76 9.76 0 0 1 12 4.88c4.65 0 8.2 3.2 9.5 7.12a10.1 10.1 0 0 1-2.12 3.48" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6.34 6.34A10 10 0 0 0 2.5 12c1.3 3.92 4.85 7.12 9.5 7.12 1.4 0 2.7-.3 3.85-.85" />
+      </svg>
+    `;
+  }
+
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M2.5 12c1.3-3.92 4.85-7.12 9.5-7.12s8.2 3.2 9.5 7.12c-1.3 3.92-4.85 7.12-9.5 7.12S3.8 15.92 2.5 12Z" />
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 12a2.25 2.25 0 1 0 4.5 0 2.25 2.25 0 0 0-4.5 0Z" />
+    </svg>
+  `;
 }
 
 function renderTree() {
@@ -437,7 +567,8 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
   const missingFiles = missingDiffFiles(fileDiffs);
 
   if (fileDiffs.length === 0 && missingFiles.length === 0) {
-    diffHost.append(emptyState("No diff to show"));
+    const message = selectedPath === null && hiddenChangedFiles().length > 0 ? "No included changes to show" : "No diff to show";
+    diffHost.append(emptyState(message));
     return;
   }
 
@@ -765,7 +896,7 @@ function cleanRenderedViews() {
 }
 
 function missingDiffFiles(fileDiffs: FileDiffMetadata[]) {
-  const candidates = selectedPath ? snapshot.files.filter((file) => file.path === selectedPath) : snapshot.files;
+  const candidates = selectedPath ? snapshot.files.filter((file) => file.path === selectedPath) : includedChangedFilesForAllChanges();
 
   return candidates.filter((file) => !fileDiffs.some((fileDiff) => diffMatchesChangedFile(fileDiff, file)));
 }
@@ -1307,6 +1438,7 @@ window.Differ = {
     setUiZoomPercent(preferences.uiZoomPercent, false);
     setSidebarWidthPoints(preferences.sidebarWidthPoints, false);
     setTheme(preferences.theme, false);
+    applyHiddenAllChangesPaths(preferences.hiddenAllChangesPaths ?? []);
   },
 };
 

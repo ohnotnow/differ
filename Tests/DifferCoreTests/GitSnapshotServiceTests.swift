@@ -136,6 +136,30 @@ struct GitSnapshotServiceTests {
         #expect(snapshot.allPatch.contains("diff --git a/Large.txt b/Large.txt") == false)
     }
 
+    @Test("global patch can exclude selected paths while keeping file status")
+    func globalPatchCanExcludeSelectedPathsWhileKeepingFileStatus() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+        try runGit(["config", "user.name", "Differ Tests"], in: rootURL)
+        try runGit(["config", "user.email", "differ@example.test"], in: rootURL)
+
+        try "one\n".write(to: rootURL.appending(path: "README.md"), atomically: true, encoding: .utf8)
+        try "two\n".write(to: rootURL.appending(path: "Sources.swift"), atomically: true, encoding: .utf8)
+        try runGit(["add", "README.md", "Sources.swift"], in: rootURL)
+        try runGit(["commit", "-m", "Initial commit"], in: rootURL)
+
+        try "one\nignored for now\n".write(to: rootURL.appending(path: "README.md"), atomically: true, encoding: .utf8)
+        try "two\nimportant\n".write(to: rootURL.appending(path: "Sources.swift"), atomically: true, encoding: .utf8)
+
+        let snapshot = try GitSnapshotService().snapshot(for: rootURL, excludingPaths: ["README.md"])
+
+        #expect(snapshot.files.contains { $0.path == "README.md" && $0.status == .modified })
+        #expect(snapshot.files.contains { $0.path == "Sources.swift" && $0.status == .modified })
+        #expect(snapshot.allPatch.contains("diff --git a/README.md b/README.md") == false)
+        #expect(snapshot.allPatch.contains("diff --git a/Sources.swift b/Sources.swift"))
+        #expect(snapshot.allPatch.contains("+important"))
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "GitSnapshotServiceTests-\(UUID().uuidString)", directoryHint: .isDirectory)

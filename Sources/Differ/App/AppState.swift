@@ -6,6 +6,7 @@ final class AppState: ObservableObject {
     @Published var selectedRepositoryURL: URL? = nil {
         didSet {
             defaults.set(selectedRepositoryURL?.path, forKey: DefaultsKey.selectedRepositoryPath)
+            hiddenAllChangesPaths = storedHiddenAllChangesPaths(for: selectedRepositoryURL)
         }
     }
 
@@ -18,6 +19,7 @@ final class AppState: ObservableObject {
     @Published private(set) var uiZoomPercent: Int
     @Published private(set) var sidebarWidthPoints: Int
     @Published private(set) var themeName: String
+    @Published private(set) var hiddenAllChangesPaths = [String]()
 
     private let defaults: UserDefaults
     private var snapshotFingerprint: String?
@@ -41,6 +43,8 @@ final class AppState: ObservableObject {
 
         let storedTheme = defaults.string(forKey: DefaultsKey.themeName)
         self.themeName = (storedTheme?.isEmpty == false) ? storedTheme! : Self.defaultThemeName
+
+        self.hiddenAllChangesPaths = storedHiddenAllChangesPaths(for: selectedRepositoryURL)
     }
 
     var selectedRepositoryDisplayName: String {
@@ -83,13 +87,16 @@ final class AppState: ObservableObject {
         }
 
         do {
+            let hiddenPaths = Set(hiddenAllChangesPaths)
             let nextSnapshot = try await Task.detached(priority: .userInitiated) {
-                try GitSnapshotService().snapshot(for: selectedRepositoryURL)
+                try GitSnapshotService().snapshot(for: selectedRepositoryURL, excludingPaths: hiddenPaths)
             }.value
 
             guard requiresAutoRefresh == false || isAutoRefreshEnabled else {
                 return
             }
+
+            pruneHiddenAllChangesPaths(to: Set(nextSnapshot.files.map(\.path)))
 
             let nextFingerprint = fingerprint(for: nextSnapshot)
             if nextFingerprint != snapshotFingerprint {
@@ -159,6 +166,28 @@ final class AppState: ObservableObject {
         defaults.set(trimmed, forKey: DefaultsKey.themeName)
     }
 
+    func setAllChangesPathHidden(path: String, hidden: Bool) {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard selectedRepositoryURL != nil, trimmed.isEmpty == false else {
+            return
+        }
+
+        var nextPaths = Set(hiddenAllChangesPaths)
+        if hidden {
+            nextPaths.insert(trimmed)
+        } else {
+            nextPaths.remove(trimmed)
+        }
+
+        let sortedPaths = nextPaths.sorted()
+        guard sortedPaths != hiddenAllChangesPaths else {
+            return
+        }
+
+        hiddenAllChangesPaths = sortedPaths
+        storeHiddenAllChangesPaths(sortedPaths, for: selectedRepositoryURL)
+    }
+
     func selectFile(path: String) async {
         guard let selectedRepositoryURL,
               let file = snapshot?.files.first(where: { $0.path == path })
@@ -190,6 +219,59 @@ final class AppState: ObservableObject {
         return files + "\n---patch---\n" + snapshot.allPatch
     }
 
+    private func pruneHiddenAllChangesPaths(to changedPaths: Set<String>) {
+        let nextPaths = hiddenAllChangesPaths
+            .filter { changedPaths.contains($0) }
+            .sorted()
+
+        guard nextPaths != hiddenAllChangesPaths else {
+            return
+        }
+
+        hiddenAllChangesPaths = nextPaths
+        storeHiddenAllChangesPaths(nextPaths, for: selectedRepositoryURL)
+    }
+
+    private func storedHiddenAllChangesPaths(for repositoryURL: URL?) -> [String] {
+        guard let repositoryPath = repositoryURL?.path else {
+            return []
+        }
+
+        return hiddenAllChangesPathsByRepository()[repositoryPath]?.sorted() ?? []
+    }
+
+    private func storeHiddenAllChangesPaths(_ paths: [String], for repositoryURL: URL?) {
+        guard let repositoryPath = repositoryURL?.path else {
+            return
+        }
+
+        var pathsByRepository = hiddenAllChangesPathsByRepository()
+        if paths.isEmpty {
+            pathsByRepository.removeValue(forKey: repositoryPath)
+        } else {
+            pathsByRepository[repositoryPath] = paths
+        }
+
+        defaults.set(pathsByRepository, forKey: DefaultsKey.hiddenAllChangesPathsByRepository)
+    }
+
+    private func hiddenAllChangesPathsByRepository() -> [String: [String]] {
+        guard let stored = defaults.dictionary(forKey: DefaultsKey.hiddenAllChangesPathsByRepository) else {
+            return [:]
+        }
+
+        return stored.reduce(into: [String: [String]]()) { result, entry in
+            guard let paths = entry.value as? [String] else {
+                return
+            }
+
+            result[entry.key] = paths
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { $0.isEmpty == false }
+                .sorted()
+        }
+    }
+
     private static func clampedZoomPercent(_ percent: Int) -> Int {
         min(200, max(80, percent))
     }
@@ -207,6 +289,7 @@ private enum DefaultsKey {
     static let uiZoomPercent = "uiZoomPercent"
     static let sidebarWidthPoints = "sidebarWidthPoints"
     static let themeName = "themeName"
+    static let hiddenAllChangesPathsByRepository = "hiddenAllChangesPathsByRepository"
 }
 
 struct SelectedPatch: Equatable, Identifiable {

@@ -25,14 +25,14 @@ public struct GitSnapshotService: Sendable {
         self.untrackedPatchBuilder = untrackedPatchBuilder
     }
 
-    public func snapshot(for repositoryURL: URL) throws -> GitSnapshot {
+    public func snapshot(for repositoryURL: URL, excludingPaths excludedPaths: Set<String> = []) throws -> GitSnapshot {
         let rootURL = try resolvedRepositoryRoot(for: repositoryURL)
         let statusData = try runner.run(
             ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
             in: rootURL
         )
         let files = try filesWithContentPreviews(try statusParser.parse(statusData), in: rootURL)
-        let patch = try patch(for: .all, files: files, in: rootURL)
+        let patch = try patch(for: .all, files: files, excludingPaths: excludedPaths, in: rootURL)
 
         return GitSnapshot(
             repositoryPath: rootURL.path,
@@ -98,12 +98,22 @@ public struct GitSnapshotService: Sendable {
         return String(data: data, encoding: .utf8)
     }
 
-    private func patch(for selection: GitDiffSelection, files: [ChangedFile], in rootURL: URL) throws -> String {
+    private func patch(
+        for selection: GitDiffSelection,
+        files: [ChangedFile],
+        excludingPaths excludedPaths: Set<String> = [],
+        in rootURL: URL
+    ) throws -> String {
         let repositoryHasHead = hasHead(in: rootURL)
 
         switch selection {
         case .all:
-            return try aggregatedPatch(for: files, repositoryHasHead: repositoryHasHead, in: rootURL)
+            return try aggregatedPatch(
+                for: files,
+                excludingPaths: excludedPaths,
+                repositoryHasHead: repositoryHasHead,
+                in: rootURL
+            )
 
         case .file(let file) where file.status == .untracked:
             return try untrackedPatch(for: file, in: rootURL) ?? ""
@@ -120,6 +130,7 @@ public struct GitSnapshotService: Sendable {
 
     private func aggregatedPatch(
         for files: [ChangedFile],
+        excludingPaths excludedPaths: Set<String>,
         repositoryHasHead: Bool,
         in rootURL: URL
     ) throws -> String {
@@ -127,6 +138,10 @@ public struct GitSnapshotService: Sendable {
         var patchBytes = 0
 
         for file in files {
+            guard excludedPaths.contains(file.path) == false else {
+                continue
+            }
+
             let patch: String?
             switch file.status {
             case .untracked:

@@ -115,19 +115,20 @@ struct DifferWebView: NSViewRepresentable {
                 appState.$uiZoomPercent,
                 appState.$sidebarWidthPoints
             )
-                .combineLatest(appState.$themeName)
+                .combineLatest(Publishers.CombineLatest(appState.$themeName, appState.$hiddenAllChangesPaths))
                 // @Published emits in willSet, so re-reading appState here returns
                 // the *previous* values. Use the values Combine emits instead, which
                 // are the new ones — otherwise the echo reverts the web's optimistic
                 // update (the "one change behind" bug).
                 .sink { [weak self] values in
-                    let ((interval, autoRefresh, zoom, sidebarWidth), theme) = values
+                    let ((interval, autoRefresh, zoom, sidebarWidth), (theme, hiddenAllChangesPaths)) = values
                     self?.sendPreferences(
                         refreshIntervalMilliseconds: interval,
                         autoRefreshEnabled: autoRefresh,
                         uiZoomPercent: zoom,
                         sidebarWidthPoints: sidebarWidth,
-                        theme: theme
+                        theme: theme,
+                        hiddenAllChangesPaths: hiddenAllChangesPaths
                     )
                 }
                 .store(in: &cancellables)
@@ -197,6 +198,18 @@ struct DifferWebView: NSViewRepresentable {
 
                 appState.setTheme(theme)
 
+            case "set-all-changes-path-hidden":
+                guard let path = message["path"] as? String,
+                      let hidden = boolValue(from: message["hidden"])
+                else {
+                    return
+                }
+
+                Task {
+                    appState.setAllChangesPathHidden(path: path, hidden: hidden)
+                    await appState.refreshSnapshot(showLoading: false)
+                }
+
             case "copy-to-clipboard":
                 guard let text = message["text"] as? String else {
                     return
@@ -264,7 +277,8 @@ struct DifferWebView: NSViewRepresentable {
                 autoRefreshEnabled: appState.isAutoRefreshEnabled,
                 uiZoomPercent: appState.uiZoomPercent,
                 sidebarWidthPoints: appState.sidebarWidthPoints,
-                theme: appState.themeName
+                theme: appState.themeName,
+                hiddenAllChangesPaths: appState.hiddenAllChangesPaths
             )
         }
 
@@ -273,7 +287,8 @@ struct DifferWebView: NSViewRepresentable {
             autoRefreshEnabled: Bool,
             uiZoomPercent: Int,
             sidebarWidthPoints: Int,
-            theme: String
+            theme: String,
+            hiddenAllChangesPaths: [String]
         ) {
             guard isWebReady else {
                 return
@@ -287,7 +302,8 @@ struct DifferWebView: NSViewRepresentable {
                         autoRefreshEnabled: autoRefreshEnabled,
                         uiZoomPercent: uiZoomPercent,
                         sidebarWidthPoints: sidebarWidthPoints,
-                        theme: theme
+                        theme: theme,
+                        hiddenAllChangesPaths: hiddenAllChangesPaths
                     ),
                 ]
             )
@@ -335,4 +351,5 @@ private struct WebPreferences: Encodable {
     let uiZoomPercent: Int
     let sidebarWidthPoints: Int
     let theme: String
+    let hiddenAllChangesPaths: [String]
 }
