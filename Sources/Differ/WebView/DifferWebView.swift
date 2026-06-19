@@ -96,6 +96,7 @@ struct DifferWebView: NSViewRepresentable {
                     }
 
                     self?.sendSnapshot(snapshot)
+                    self?.sendCurrentReviewerComments()
                 }
                 .store(in: &cancellables)
 
@@ -106,6 +107,16 @@ struct DifferWebView: NSViewRepresentable {
                     }
 
                     self?.sendSelectedPatch(selectedPatch)
+                }
+                .store(in: &cancellables)
+
+            appState.$reviewerCommentsDocument
+                .sink { [weak self] document in
+                    guard let document else {
+                        return
+                    }
+
+                    self?.sendReviewerComments(document)
                 }
                 .store(in: &cancellables)
 
@@ -148,6 +159,7 @@ struct DifferWebView: NSViewRepresentable {
                 if let snapshot = appState.snapshot {
                     sendSnapshot(snapshot)
                 }
+                sendCurrentReviewerComments()
 
             case "set-auto-refresh":
                 guard let enabled = boolValue(from: message["enabled"]) else {
@@ -217,6 +229,54 @@ struct DifferWebView: NSViewRepresentable {
 
                 copyToClipboard(text)
 
+            case "create-comment":
+                guard let draft = reviewerCommentDraft(from: message) else {
+                    return
+                }
+
+                appState.createReviewerComment(
+                    body: draft.body,
+                    reference: draft.reference,
+                    selection: draft.selection,
+                    snippet: draft.snippet,
+                    snapshotFingerprint: draft.snapshotFingerprint
+                )
+
+            case "update-comment":
+                guard let id = message["id"] as? String,
+                      let body = message["body"] as? String
+                else {
+                    return
+                }
+
+                appState.updateReviewerComment(id: id, body: body)
+
+            case "resolve-comment":
+                guard let id = message["id"] as? String else {
+                    return
+                }
+
+                appState.resolveReviewerComment(id: id)
+
+            case "reopen-comment":
+                guard let id = message["id"] as? String else {
+                    return
+                }
+
+                appState.reopenReviewerComment(id: id)
+
+            case "delete-comment":
+                guard let id = message["id"] as? String else {
+                    return
+                }
+
+                appState.deleteReviewerComment(id: id)
+
+            case "set-comment-placements":
+                appState.setReviewerCommentPlacements(
+                    reviewerCommentPlacementReports(from: message["placements"])
+                )
+
             default:
                 break
             }
@@ -254,6 +314,80 @@ struct DifferWebView: NSViewRepresentable {
             }
         }
 
+        private func reviewerCommentDraft(from message: [String: Any]) -> ReviewerCommentDraft? {
+            guard let body = message["body"] as? String,
+                  let reference = message["reference"] as? String,
+                  let selection = reviewerCommentSelection(from: message["selection"])
+            else {
+                return nil
+            }
+
+            return ReviewerCommentDraft(
+                body: body,
+                reference: reference,
+                selection: selection,
+                snippet: message["snippet"] as? String,
+                snapshotFingerprint: message["snapshotFingerprint"] as? String
+            )
+        }
+
+        private func reviewerCommentSelection(from value: Any?) -> ReviewerCommentSelection? {
+            guard let dictionary = value as? [String: Any],
+                  let file = dictionary["file"] as? String,
+                  let side = reviewerCommentSide(from: dictionary["side"]),
+                  let startLine = intValue(from: dictionary["startLine"]),
+                  let endLine = intValue(from: dictionary["endLine"])
+            else {
+                return nil
+            }
+
+            return ReviewerCommentSelection(
+                file: file,
+                oldFile: dictionary["oldFile"] as? String,
+                side: side,
+                startLine: startLine,
+                endLine: endLine,
+                endSide: reviewerCommentSide(from: dictionary["endSide"])
+            )
+        }
+
+        private func reviewerCommentSide(from value: Any?) -> ReviewerCommentSide? {
+            guard let string = value as? String else {
+                return nil
+            }
+
+            return ReviewerCommentSide(rawValue: string)
+        }
+
+        private func reviewerCommentPlacementReports(from value: Any?) -> [ReviewerCommentPlacementReport] {
+            guard let values = value as? [Any] else {
+                return []
+            }
+
+            return values.compactMap { value in
+                guard let dictionary = value as? [String: Any],
+                      let id = dictionary["id"] as? String,
+                      let status = reviewerCommentPlacementStatus(from: dictionary["status"])
+                else {
+                    return nil
+                }
+
+                return ReviewerCommentPlacementReport(
+                    id: id,
+                    status: status,
+                    reason: dictionary["reason"] as? String
+                )
+            }
+        }
+
+        private func reviewerCommentPlacementStatus(from value: Any?) -> ReviewerCommentPlacementStatus? {
+            guard let string = value as? String else {
+                return nil
+            }
+
+            return ReviewerCommentPlacementStatus(rawValue: string)
+        }
+
         private func sendSnapshot(_ snapshot: GitSnapshot) {
             guard isWebReady else {
                 return
@@ -269,6 +403,22 @@ struct DifferWebView: NSViewRepresentable {
             }
 
             evaluateDifferCall(functionName: "applyPatch", arguments: [selectedPatch.path, selectedPatch.patch])
+        }
+
+        private func sendCurrentReviewerComments() {
+            guard let document = appState.reviewerCommentsDocument else {
+                return
+            }
+
+            sendReviewerComments(document)
+        }
+
+        private func sendReviewerComments(_ document: ReviewerCommentsDocument) {
+            guard isWebReady else {
+                return
+            }
+
+            evaluateDifferCall(functionName: "applyComments", arguments: [document])
         }
 
         private func sendCurrentPreferences() {
@@ -352,4 +502,12 @@ private struct WebPreferences: Encodable {
     let sidebarWidthPoints: Int
     let theme: String
     let hiddenAllChangesPaths: [String]
+}
+
+private struct ReviewerCommentDraft {
+    let body: String
+    let reference: String
+    let selection: ReviewerCommentSelection
+    let snippet: String?
+    let snapshotFingerprint: String?
 }

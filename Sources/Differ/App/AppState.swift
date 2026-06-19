@@ -3,6 +3,8 @@ import DifferCore
 
 @MainActor
 final class AppState: ObservableObject {
+    private static let maximumStoredSnapshotFingerprintCharacters = 128
+
     @Published var selectedRepositoryURL: URL? = nil {
         didSet {
             defaults.set(selectedRepositoryURL?.path, forKey: DefaultsKey.selectedRepositoryPath)
@@ -20,13 +22,16 @@ final class AppState: ObservableObject {
     @Published private(set) var sidebarWidthPoints: Int
     @Published private(set) var themeName: String
     @Published private(set) var hiddenAllChangesPaths = [String]()
+    @Published private(set) var reviewerCommentsDocument: ReviewerCommentsDocument?
 
     private let defaults: UserDefaults
+    private let reviewerCommentStore: ReviewerCommentStore
     private var snapshotFingerprint: String?
     private var isRefreshing = false
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, reviewerCommentStore: ReviewerCommentStore = ReviewerCommentStore()) {
         self.defaults = defaults
+        self.reviewerCommentStore = reviewerCommentStore
 
         if let path = defaults.string(forKey: DefaultsKey.selectedRepositoryPath), path.isEmpty == false {
             self.selectedRepositoryURL = URL(fileURLWithPath: path, isDirectory: true)
@@ -45,6 +50,7 @@ final class AppState: ObservableObject {
         self.themeName = (storedTheme?.isEmpty == false) ? storedTheme! : Self.defaultThemeName
 
         self.hiddenAllChangesPaths = storedHiddenAllChangesPaths(for: selectedRepositoryURL)
+        loadReviewerCommentsForSelectedRepository()
     }
 
     var selectedRepositoryDisplayName: String {
@@ -54,6 +60,7 @@ final class AppState: ObservableObject {
     func openRepository(_ url: URL) async {
         selectedRepositoryURL = url
         selectedPatch = nil
+        loadReviewerCommentsForSelectedRepository()
         await refreshSnapshot()
     }
 
@@ -207,6 +214,191 @@ final class AppState: ObservableObject {
         }
     }
 
+    func createReviewerComment(
+        body: String,
+        reference: String,
+        selection: ReviewerCommentSelection,
+        snippet: String?,
+        snapshotFingerprint: String?
+    ) {
+        guard let body = nonEmptyTrimmed(body),
+              let reference = nonEmptyTrimmed(reference)
+        else {
+            return
+        }
+
+        let now = Date()
+        let comment = ReviewerComment(
+            id: UUID().uuidString,
+            revision: 1,
+            state: .open,
+            body: body,
+            createdAt: now,
+            updatedAt: now,
+            reference: reference,
+            selection: selection,
+            snippet: nonEmptyTrimmed(snippet),
+            snapshotFingerprint: storedSnapshotFingerprint(snapshotFingerprint),
+            placement: nil
+        )
+
+        saveReviewerComments(currentReviewerComments() + [comment])
+    }
+
+    func updateReviewerComment(id: String, body: String) {
+        guard let id = nonEmptyTrimmed(id),
+              let body = nonEmptyTrimmed(body)
+        else {
+            return
+        }
+
+        replaceReviewerComment(id: id) { comment, now in
+            ReviewerComment(
+                id: comment.id,
+                revision: comment.revision + 1,
+                state: comment.state,
+                body: body,
+                createdAt: comment.createdAt,
+                updatedAt: now,
+                resolvedAt: comment.resolvedAt,
+                reference: comment.reference,
+                selection: comment.selection,
+                snippet: comment.snippet,
+                snapshotFingerprint: storedSnapshotFingerprint(comment.snapshotFingerprint),
+                placement: comment.placement
+            )
+        }
+    }
+
+    func resolveReviewerComment(id: String) {
+        guard let id = nonEmptyTrimmed(id) else {
+            return
+        }
+
+        replaceReviewerComment(id: id) { comment, now in
+            guard comment.state != .resolved else {
+                return nil
+            }
+
+            return ReviewerComment(
+                id: comment.id,
+                revision: comment.revision + 1,
+                state: .resolved,
+                body: comment.body,
+                createdAt: comment.createdAt,
+                updatedAt: now,
+                resolvedAt: now,
+                reference: comment.reference,
+                selection: comment.selection,
+                snippet: comment.snippet,
+                snapshotFingerprint: storedSnapshotFingerprint(comment.snapshotFingerprint),
+                placement: comment.placement
+            )
+        }
+    }
+
+    func reopenReviewerComment(id: String) {
+        guard let id = nonEmptyTrimmed(id) else {
+            return
+        }
+
+        replaceReviewerComment(id: id) { comment, now in
+            guard comment.state != .open else {
+                return nil
+            }
+
+            return ReviewerComment(
+                id: comment.id,
+                revision: comment.revision + 1,
+                state: .open,
+                body: comment.body,
+                createdAt: comment.createdAt,
+                updatedAt: now,
+                resolvedAt: nil,
+                reference: comment.reference,
+                selection: comment.selection,
+                snippet: comment.snippet,
+                snapshotFingerprint: storedSnapshotFingerprint(comment.snapshotFingerprint),
+                placement: comment.placement
+            )
+        }
+    }
+
+    func setReviewerCommentPlacements(_ reports: [ReviewerCommentPlacementReport]) {
+        let placementsByID = reports.reduce(into: [String: ReviewerCommentPlacementReport]()) { result, report in
+            guard let id = nonEmptyTrimmed(report.id) else {
+                return
+            }
+
+            result[id] = report
+        }
+
+        guard placementsByID.isEmpty == false else {
+            return
+        }
+
+        let now = Date()
+        var didChange = false
+        let nextComments = currentReviewerComments().map { comment in
+            guard let report = placementsByID[comment.id] else {
+                let sanitized = sanitizedReviewerComment(comment)
+                didChange = didChange || sanitized != comment
+                return sanitized
+            }
+
+            let nextPlacement = ReviewerCommentPlacement(
+                status: report.status,
+                reason: nonEmptyTrimmed(report.reason),
+                checkedAt: now
+            )
+
+            let sanitized = sanitizedReviewerComment(comment)
+            guard sanitized.placement?.status != nextPlacement.status ||
+                sanitized.placement?.reason != nextPlacement.reason
+            else {
+                didChange = didChange || sanitized != comment
+                return sanitized
+            }
+
+            didChange = true
+            return ReviewerComment(
+                id: sanitized.id,
+                revision: sanitized.revision,
+                state: sanitized.state,
+                body: sanitized.body,
+                createdAt: sanitized.createdAt,
+                updatedAt: sanitized.updatedAt,
+                resolvedAt: sanitized.resolvedAt,
+                reference: sanitized.reference,
+                selection: sanitized.selection,
+                snippet: sanitized.snippet,
+                snapshotFingerprint: sanitized.snapshotFingerprint,
+                placement: nextPlacement
+            )
+        }
+
+        guard didChange else {
+            return
+        }
+
+        saveReviewerComments(nextComments)
+    }
+
+    func deleteReviewerComment(id: String) {
+        guard let id = nonEmptyTrimmed(id) else {
+            return
+        }
+
+        let comments = currentReviewerComments()
+        let nextComments = comments.filter { $0.id != id }
+
+        guard nextComments.count != comments.count else {
+            return
+        }
+
+        saveReviewerComments(nextComments)
+    }
+
     func reportBridgeError(_ message: String) {
         errorMessage = message
     }
@@ -230,6 +422,83 @@ final class AppState: ObservableObject {
 
         hiddenAllChangesPaths = nextPaths
         storeHiddenAllChangesPaths(nextPaths, for: selectedRepositoryURL)
+    }
+
+    private func loadReviewerCommentsForSelectedRepository() {
+        guard let selectedRepositoryURL else {
+            reviewerCommentsDocument = nil
+            return
+        }
+
+        do {
+            reviewerCommentsDocument = try reviewerCommentStore.load(for: selectedRepositoryURL)
+        } catch {
+            reviewerCommentsDocument = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func currentReviewerComments() -> [ReviewerComment] {
+        reviewerCommentsDocument?.comments ?? []
+    }
+
+    private func replaceReviewerComment(
+        id: String,
+        transform: (ReviewerComment, Date) -> ReviewerComment?
+    ) {
+        var comments = currentReviewerComments()
+        guard let index = comments.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+
+        guard let nextComment = transform(comments[index], Date()) else {
+            return
+        }
+
+        comments[index] = nextComment
+        saveReviewerComments(comments)
+    }
+
+    private func saveReviewerComments(_ comments: [ReviewerComment]) {
+        guard let selectedRepositoryURL else {
+            return
+        }
+
+        do {
+            reviewerCommentsDocument = try reviewerCommentStore.save(
+                comments: comments.map(sanitizedReviewerComment),
+                for: selectedRepositoryURL
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func sanitizedReviewerComment(_ comment: ReviewerComment) -> ReviewerComment {
+        ReviewerComment(
+            id: comment.id,
+            revision: comment.revision,
+            state: comment.state,
+            body: comment.body,
+            createdAt: comment.createdAt,
+            updatedAt: comment.updatedAt,
+            resolvedAt: comment.resolvedAt,
+            reference: comment.reference,
+            selection: comment.selection,
+            snippet: comment.snippet,
+            snapshotFingerprint: storedSnapshotFingerprint(comment.snapshotFingerprint),
+            placement: comment.placement
+        )
+    }
+
+    private func storedSnapshotFingerprint(_ value: String?) -> String? {
+        guard let trimmed = nonEmptyTrimmed(value),
+              trimmed.count <= Self.maximumStoredSnapshotFingerprintCharacters
+        else {
+            return nil
+        }
+
+        return trimmed
     }
 
     private func storedHiddenAllChangesPaths(for repositoryURL: URL?) -> [String] {
@@ -270,6 +539,15 @@ final class AppState: ObservableObject {
                 .filter { $0.isEmpty == false }
                 .sorted()
         }
+    }
+
+    private func nonEmptyTrimmed(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func clampedZoomPercent(_ percent: Int) -> Int {

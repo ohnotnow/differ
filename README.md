@@ -14,6 +14,14 @@ The app shows all current working tree changes by default. You can select one fi
 
 You can select changed lines in the diff and copy either a file/line reference or a reference plus the selected contents as a fenced diff snippet. This is meant for agent-assisted review: instead of describing "that bit in the file", you can paste the exact path, line range, and code into a coding-agent prompt.
 
+Differ also supports reviewer comments on selected diff lines. Comments are stored outside the working tree under Git-private storage, so they do not appear in `git status` and do not need to be copied into prompts by hand. A coding agent can discover the current comment file from inside the repository with:
+
+```bash
+git rev-parse --path-format=absolute --git-path differ/comments.json
+```
+
+If the file is missing, there are no reviewer comments. When present, it is a schema-versioned JSON document containing the materialized comment state, including `open` and `resolved` comments, line selections, snippets, and placement metadata (`mapped`, `unmapped`, or `stale`). The repo-local skill at `skills/differ/SKILL.md` gives agents the short workflow for reading and acting on those comments.
+
 ## Prerequisites
 
 - macOS 14 or newer

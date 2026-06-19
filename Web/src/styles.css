@@ -527,15 +527,207 @@ select {
   outline: none;
 }
 
+.comment-composer {
+  position: fixed;
+  z-index: 70;
+  display: grid;
+  gap: 8px;
+  width: min(calc(360px * var(--ui-scale)), calc(100vw - 16px));
+  padding: 10px;
+  border: 1px solid rgba(118, 166, 184, 0.35);
+  border-radius: 8px;
+  background: #20242b;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.56);
+}
+
+.comment-composer-header,
+.review-comment-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.comment-composer-title {
+  color: #fffaf0;
+  font-size: calc(12px * var(--ui-scale));
+}
+
+.comment-reference {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.comment-textarea {
+  width: 100%;
+  min-height: calc(82px * var(--ui-scale));
+  resize: vertical;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #171a1f;
+  color: #f2efe6;
+  font: inherit;
+  line-height: 1.45;
+}
+
+.comment-textarea:focus {
+  border-color: rgba(118, 166, 184, 0.75);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(118, 166, 184, 0.14);
+}
+
+.comment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.comment-button {
+  min-height: calc(26px * var(--ui-scale));
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  font-size: calc(12px * var(--ui-scale));
+  font-weight: 700;
+}
+
+.comment-button.primary {
+  border-color: rgba(118, 166, 184, 0.7);
+  background: #2f5e70;
+  color: #ffffff;
+}
+
+.comment-button.primary:hover,
+.comment-button.primary:focus-visible {
+  background: #376d80;
+  outline: none;
+}
+
+.comment-button.secondary {
+  background: #242830;
+  color: #d8d6cf;
+}
+
+.comment-button.secondary:hover,
+.comment-button.secondary:focus-visible {
+  border-color: rgba(118, 166, 184, 0.55);
+  background: #2e343d;
+  outline: none;
+}
+
+.comment-button.danger {
+  color: #f0b0a9;
+}
+
+.review-comment {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 2px 0;
+  padding: 9px 10px;
+  border-left: 3px solid var(--accent);
+  background: rgba(118, 166, 184, 0.1);
+  color: #f2efe6;
+}
+
+.review-comment.resolved {
+  border-left-color: rgba(174, 178, 184, 0.55);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-muted);
+}
+
+.review-comment-status {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(118, 166, 184, 0.2);
+  color: #dff4fb;
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.review-comment.resolved .review-comment-status {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.review-comment-status.placement {
+  background: rgba(196, 165, 96, 0.18);
+  color: #f2d99c;
+}
+
+.review-comment-status.placement.stale {
+  background: rgba(205, 111, 100, 0.16);
+  color: #f0b0a9;
+}
+
+.review-comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.review-comment-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.unmapped-comments-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(196, 165, 96, 0.28);
+  border-radius: 7px;
+  background: rgba(196, 165, 96, 0.06);
+}
+
+.unmapped-comments-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.unmapped-comments-title {
+  color: #f2d99c;
+  font-size: calc(12px * var(--ui-scale));
+}
+
+.unmapped-comments-detail {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--ui-scale));
+}
+
+.unmapped-comments-list {
+  display: grid;
+  gap: 8px;
+}
+
 .file-diff-frame + .file-diff-frame,
 .file-diff-frame + .diff-notice,
 .file-diff-frame + .file-preview-frame,
+.file-diff-frame + .unmapped-comments-panel,
 .diff-notice + .file-diff-frame,
 .diff-notice + .diff-notice,
 .diff-notice + .file-preview-frame,
+.diff-notice + .unmapped-comments-panel,
 .file-preview-frame + .file-diff-frame,
 .file-preview-frame + .diff-notice,
-.file-preview-frame + .file-preview-frame {
+.file-preview-frame + .file-preview-frame,
+.file-preview-frame + .unmapped-comments-panel {
   margin-top: 12px;
 }
 

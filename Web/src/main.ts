@@ -3,6 +3,7 @@ import {
   FileDiff,
   parsePatchFiles,
   resolveTheme,
+  type DiffLineAnnotation,
   type FileContents,
   type FileDiffMetadata,
   type SelectedLineRange,
@@ -39,6 +40,53 @@ type DifferPreferences = {
   hiddenAllChangesPaths?: string[];
 };
 
+type ReviewerCommentState = "open" | "resolved";
+type ReviewerCommentSide = "deletions" | "additions";
+type ReviewerCommentPlacementStatus = "mapped" | "unmapped" | "stale";
+
+type ReviewerCommentSelection = {
+  file: string;
+  oldFile?: string;
+  side: ReviewerCommentSide;
+  startLine: number;
+  endLine: number;
+  endSide?: ReviewerCommentSide;
+};
+
+type ReviewerComment = {
+  id: string;
+  revision: number;
+  state: ReviewerCommentState;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  reference: string;
+  selection: ReviewerCommentSelection;
+  snippet?: string;
+  snapshotFingerprint?: string;
+  placement?: ReviewerCommentPlacement;
+};
+
+type ReviewerCommentPlacement = {
+  status: ReviewerCommentPlacementStatus;
+  reason?: string;
+  checkedAt?: string;
+};
+
+type ReviewerCommentPlacementReport = {
+  id: string;
+  status: ReviewerCommentPlacementStatus;
+  reason?: string;
+};
+
+type ReviewerCommentsDocument = {
+  schemaVersion: number;
+  repositoryPath: string;
+  updatedAt: string;
+  comments: ReviewerComment[];
+};
+
 type NativeMessage =
   | { type: "select-file"; path: string }
   | { type: "select-all" }
@@ -49,11 +97,31 @@ type NativeMessage =
   | { type: "set-theme"; theme: string }
   | { type: "set-all-changes-path-hidden"; path: string; hidden: boolean }
   | { type: "copy-to-clipboard"; text: string }
+  | {
+      type: "create-comment";
+      body: string;
+      reference: string;
+      selection: ReviewerCommentSelection;
+      snippet?: string;
+      snapshotFingerprint?: string;
+    }
+  | { type: "update-comment"; id: string; body: string }
+  | { type: "resolve-comment"; id: string }
+  | { type: "reopen-comment"; id: string }
+  | { type: "delete-comment"; id: string }
+  | { type: "set-comment-placements"; placements: ReviewerCommentPlacementReport[] }
   | { type: "web-ready" };
 
 type RenderedView = {
   cleanUp: () => void;
   setSelectedLines?: (range: SelectedLineRange | null, options?: { notify?: boolean }) => void;
+};
+
+type CommentDraftContext = {
+  fileDiff: FileDiffMetadata;
+  range: SelectedLineRange;
+  reference: string;
+  snippet?: string;
 };
 
 type DiffSelectionPoint = {
@@ -76,6 +144,7 @@ declare global {
       applySnapshot: (snapshot: DifferSnapshot) => void;
       applyPatch: (path: string, patch: string) => void;
       applyPreferences: (preferences: DifferPreferences) => void;
+      applyComments: (comments: ReviewerCommentsDocument) => void;
     };
     webkit?: {
       messageHandlers?: {
@@ -151,10 +220,13 @@ let currentTheme = defaultTheme;
 const treeStylesCache = new Map<string, TreeThemeStyles>();
 let autoRefreshEnabled = true;
 let hiddenAllChangesPaths = new Set<string>();
+let reviewerCommentsDocument: ReviewerCommentsDocument | null = null;
+let reportedCommentPlacementSignature: string | null = null;
 let pendingAutoRefreshEnabled: boolean | null = null;
 let zoomReflowFrame: number | null = null;
 let activeDiffSelection: ActiveDiffSelection | null = null;
 let copyMenu: HTMLElement | null = null;
+let commentComposer: HTMLElement | null = null;
 
 function render() {
   const hiddenCount = hiddenChangedFiles().length;
@@ -560,7 +632,9 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
   }
 
   if (snapshot.files.length === 0) {
+    reportReviewerCommentPlacements();
     diffHost.append(emptyState("No changes"));
+    renderUnmappedComments(fileDiffs);
     return;
   }
 
@@ -568,17 +642,21 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
 
   if (fileDiffs.length === 0 && missingFiles.length === 0) {
     const message = selectedPath === null && hiddenChangedFiles().length > 0 ? "No included changes to show" : "No diff to show";
+    reportReviewerCommentPlacements();
     diffHost.append(emptyState(message));
+    renderUnmappedComments(fileDiffs);
     return;
   }
+
+  reportReviewerCommentPlacements();
 
   for (const fileDiff of fileDiffs) {
     const frame = document.createElement("section");
     frame.className = "file-diff-frame";
     diffHost.append(frame);
 
-    let view: FileDiff;
-    view = new FileDiff({
+    let view: FileDiff<ReviewerComment>;
+    view = new FileDiff<ReviewerComment>({
       theme: currentTheme,
       diffStyle: "unified",
       hunkSeparators: "line-info-basic",
@@ -587,6 +665,9 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
       enableGutterUtility: true,
       renderGutterUtility(getHoveredRow) {
         return copySelectionButton(fileDiff, () => rangeForCopyAction(fileDiff, frame, getHoveredRow));
+      },
+      renderAnnotation(annotation) {
+        return reviewerCommentElement(annotation.metadata);
       },
       onLineSelectionStart(range) {
         clearOtherDiffSelections(view);
@@ -604,6 +685,7 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
     view.render({
       fileDiff,
       containerWrapper: frame,
+      lineAnnotations: commentAnnotationsForFileDiff(fileDiff),
     });
   }
 
@@ -614,14 +696,16 @@ function renderDiff(fileDiffs: FileDiffMetadata[]) {
       diffHost.append(diffNotice(file));
     }
   }
+
+  renderUnmappedComments(fileDiffs);
 }
 
 function copySelectionButton(fileDiff: FileDiffMetadata, range: () => SelectedLineRange | null) {
   const button = document.createElement("button");
   button.className = "copy-selection-button";
   button.type = "button";
-  button.title = "Copy selected lines";
-  button.setAttribute("aria-label", "Copy selected lines");
+  button.title = "Selection actions";
+  button.setAttribute("aria-label", "Selection actions");
   button.innerHTML = `
     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" aria-hidden="true">
       <path stroke-linecap="round" stroke-linejoin="round" d="M8 7.75A2.75 2.75 0 0 1 10.75 5h5.5A2.75 2.75 0 0 1 19 7.75v8.5A2.75 2.75 0 0 1 16.25 19h-5.5A2.75 2.75 0 0 1 8 16.25v-8.5Z" />
@@ -644,6 +728,170 @@ function copySelectionButton(fileDiff: FileDiffMetadata, range: () => SelectedLi
   });
 
   return button;
+}
+
+function commentAnnotationsForFileDiff(fileDiff: FileDiffMetadata): DiffLineAnnotation<ReviewerComment>[] {
+  return renderableCommentsForFileDiff(fileDiff)
+    .map((comment) => ({
+      side: comment.selection.side,
+      lineNumber: comment.selection.startLine,
+      metadata: comment,
+    }));
+}
+
+function renderableCommentsForFileDiff(fileDiff: FileDiffMetadata) {
+  return reviewerComments().filter((comment) => commentCanRenderInFileDiff(comment, fileDiff));
+}
+
+function commentCanRenderInFileDiff(comment: ReviewerComment, fileDiff: FileDiffMetadata) {
+  return commentMatchesFileDiff(comment, fileDiff) && formatDiffSelection(fileDiff, selectedRangeForComment(comment), "reference") !== undefined;
+}
+
+function commentMatchesFileDiff(comment: ReviewerComment, fileDiff: FileDiffMetadata) {
+  const diffPaths = [fileDiff.name, fileDiff.prevName].flatMap((path) => normalizedDiffPath(path));
+  const commentPaths = [comment.selection.file, comment.selection.oldFile].flatMap((path) => normalizedDiffPath(path));
+
+  return commentPaths.some((path) => diffPaths.includes(path));
+}
+
+function selectedRangeForComment(comment: ReviewerComment): SelectedLineRange {
+  return {
+    start: comment.selection.startLine,
+    side: comment.selection.side,
+    end: comment.selection.endLine,
+    endSide: comment.selection.endSide ?? comment.selection.side,
+  };
+}
+
+function reviewerComments() {
+  return reviewerCommentsDocument?.comments ?? [];
+}
+
+function reportReviewerCommentPlacements() {
+  const reports = reviewerCommentPlacementReports();
+  const signature = reviewerCommentPlacementSignature(reports);
+
+  if (signature === reportedCommentPlacementSignature) {
+    return;
+  }
+
+  reportedCommentPlacementSignature = signature;
+
+  if (reports.length === 0) {
+    return;
+  }
+
+  postNative({ type: "set-comment-placements", placements: reports });
+}
+
+function reviewerCommentPlacementReports(): ReviewerCommentPlacementReport[] {
+  const diffFiles = reviewerCommentPlacementDiffFiles();
+
+  return reviewerComments().map((comment) => ({
+    id: comment.id,
+    ...reviewerCommentPlacement(comment, diffFiles),
+  }));
+}
+
+function reviewerCommentPlacementSignature(reports: ReviewerCommentPlacementReport[]) {
+  return reports.map((report) => `${report.id}\0${report.status}\0${report.reason ?? ""}`).join("\n");
+}
+
+function reviewerCommentPlacementDiffFiles() {
+  return [...allDiffFiles, ...currentDiffFiles];
+}
+
+function reviewerCommentPlacement(
+  comment: ReviewerComment,
+  fileDiffs: FileDiffMetadata[],
+): Pick<ReviewerCommentPlacementReport, "status" | "reason"> {
+  if (!snapshot.files.some((file) => commentMatchesChangedFile(comment, file))) {
+    return { status: "stale", reason: "file-not-in-current-changes" };
+  }
+
+  const matchingDiffFiles = fileDiffs.filter((fileDiff) => commentMatchesFileDiff(comment, fileDiff));
+
+  if (matchingDiffFiles.some((fileDiff) => commentCanRenderInFileDiff(comment, fileDiff))) {
+    return { status: "mapped" };
+  }
+
+  if (matchingDiffFiles.length === 0) {
+    const reason = hiddenChangedFiles().some((file) => commentMatchesChangedFile(comment, file))
+      ? "file-hidden-from-all-changes"
+      : "diff-not-rendered";
+
+    return { status: "unmapped", reason };
+  }
+
+  return { status: "unmapped", reason: "selected-lines-not-in-current-diff" };
+}
+
+function renderUnmappedComments(fileDiffs: FileDiffMetadata[]) {
+  const comments = unmappedCommentsForCurrentView(fileDiffs);
+
+  if (comments.length === 0) {
+    return;
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "unmapped-comments-panel";
+
+  const header = document.createElement("div");
+  header.className = "unmapped-comments-header";
+
+  const title = document.createElement("strong");
+  title.className = "unmapped-comments-title";
+  title.textContent = "Comments not shown in this diff";
+
+  const detail = document.createElement("p");
+  detail.className = "unmapped-comments-detail";
+  detail.textContent =
+    comments.length === 1
+      ? "1 open comment is not anchored to a visible line."
+      : `${comments.length} open comments are not anchored to visible lines.`;
+
+  header.append(title, detail);
+
+  const list = document.createElement("div");
+  list.className = "unmapped-comments-list";
+
+  for (const comment of comments) {
+    list.append(reviewerCommentElement(comment));
+  }
+
+  panel.append(header, list);
+  diffHost.append(panel);
+}
+
+function unmappedCommentsForCurrentView(fileDiffs: FileDiffMetadata[]) {
+  const inlineCommentIDs = new Set(fileDiffs.flatMap((fileDiff) => renderableCommentsForFileDiff(fileDiff)).map((comment) => comment.id));
+  const placementDiffFiles = reviewerCommentPlacementDiffFiles();
+
+  return reviewerComments().filter((comment) => {
+    if (comment.state !== "open" || inlineCommentIDs.has(comment.id) || !commentIsRelevantToCurrentView(comment)) {
+      return false;
+    }
+
+    return reviewerCommentPlacement(comment, placementDiffFiles).status !== "mapped";
+  });
+}
+
+function commentIsRelevantToCurrentView(comment: ReviewerComment) {
+  return selectedPath === null || commentMatchesPath(comment, selectedPath);
+}
+
+function commentMatchesPath(comment: ReviewerComment, path: string) {
+  const pathCandidates = normalizedDiffPath(path);
+  const commentPaths = [comment.selection.file, comment.selection.oldFile].flatMap((commentPath) => normalizedDiffPath(commentPath));
+
+  return commentPaths.some((commentPath) => pathCandidates.includes(commentPath));
+}
+
+function commentMatchesChangedFile(comment: ReviewerComment, file: ChangedFile) {
+  const filePaths = [file.path, file.oldPath].flatMap((path) => normalizedDiffPath(path));
+  const commentPaths = [comment.selection.file, comment.selection.oldFile].flatMap((path) => normalizedDiffPath(path));
+
+  return commentPaths.some((path) => filePaths.includes(path));
 }
 
 function rangeForCopyAction(
@@ -767,6 +1015,7 @@ function sideForLineElement(lineElement: HTMLElement): SelectionSide {
 
 function openCopyMenu(anchor: HTMLElement, fileDiff: FileDiffMetadata, range: SelectedLineRange) {
   closeCopyMenu();
+  closeCommentComposer();
 
   const menu = document.createElement("div");
   menu.className = "copy-selection-menu";
@@ -774,6 +1023,7 @@ function openCopyMenu(anchor: HTMLElement, fileDiff: FileDiffMetadata, range: Se
   menu.append(
     copyMenuItem("Copy reference", "reference", fileDiff, range),
     copyMenuItem("Copy reference + contents", "reference-with-contents", fileDiff, range),
+    commentMenuItem("Add comment", anchor, fileDiff, range),
   );
   document.body.append(menu);
   copyMenu = menu;
@@ -795,6 +1045,186 @@ function copyMenuItem(label: string, mode: DiffSelectionCopyMode, fileDiff: File
   return button;
 }
 
+function commentMenuItem(label: string, anchor: HTMLElement, fileDiff: FileDiffMetadata, range: SelectedLineRange) {
+  const button = document.createElement("button");
+  button.className = "copy-selection-menu-item";
+  button.type = "button";
+  button.setAttribute("role", "menuitem");
+  button.textContent = label;
+  button.addEventListener("click", () => {
+    const context = commentDraftContext(fileDiff, range);
+    closeCopyMenu();
+
+    if (context) {
+      openCommentComposer(anchor, context);
+    }
+  });
+
+  return button;
+}
+
+function commentDraftContext(fileDiff: FileDiffMetadata, range: SelectedLineRange): CommentDraftContext | null {
+  const reference = formatDiffSelection(fileDiff, range, "reference");
+
+  if (!reference) {
+    return null;
+  }
+
+  return {
+    fileDiff,
+    range,
+    reference,
+    snippet: selectionSnippet(fileDiff, range, reference),
+  };
+}
+
+function selectionSnippet(fileDiff: FileDiffMetadata, range: SelectedLineRange, reference: string) {
+  const referenceWithContents = formatDiffSelection(fileDiff, range, "reference-with-contents");
+  const prefix = `${reference}\n\n`;
+
+  return referenceWithContents?.startsWith(prefix) ? referenceWithContents.slice(prefix.length) : undefined;
+}
+
+function reviewerCommentElement(comment: ReviewerComment) {
+  const card = document.createElement("article");
+  card.className = `review-comment ${comment.state}`;
+  card.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+
+  renderReviewerCommentDisplay(card, comment);
+  return card;
+}
+
+function renderReviewerCommentDisplay(card: HTMLElement, comment: ReviewerComment) {
+  card.replaceChildren();
+
+  const header = document.createElement("div");
+  header.className = "review-comment-header";
+
+  const status = document.createElement("span");
+  status.className = "review-comment-status";
+  status.textContent = comment.state === "open" ? "Open" : "Resolved";
+
+  const reference = document.createElement("span");
+  reference.className = "comment-reference";
+  reference.textContent = comment.reference;
+  reference.title = comment.reference;
+
+  header.append(status);
+
+  if (comment.placement && comment.placement.status !== "mapped") {
+    const placement = document.createElement("span");
+    placement.className = `review-comment-status placement ${comment.placement.status}`;
+    placement.textContent = reviewerCommentPlacementLabel(comment.placement.status);
+    placement.title = comment.placement.reason ?? reviewerCommentPlacementLabel(comment.placement.status);
+    header.append(placement);
+  }
+
+  header.append(reference);
+
+  const body = document.createElement("p");
+  body.className = "review-comment-body";
+  body.textContent = comment.body;
+
+  const actions = document.createElement("div");
+  actions.className = "comment-actions";
+  actions.append(
+    commentActionButton("Edit", () => renderReviewerCommentEditor(card, comment)),
+    comment.state === "open"
+      ? commentActionButton("Resolve", () => postNative({ type: "resolve-comment", id: comment.id }))
+      : commentActionButton("Reopen", () => postNative({ type: "reopen-comment", id: comment.id })),
+    commentActionButton("Delete", () => renderReviewerCommentDeleteConfirm(card, comment), "danger"),
+  );
+
+  card.append(header, body, actions);
+}
+
+function renderReviewerCommentEditor(card: HTMLElement, comment: ReviewerComment) {
+  card.replaceChildren();
+
+  const form = document.createElement("form");
+  form.className = "review-comment-editor";
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "comment-textarea";
+  textarea.rows = 4;
+  textarea.value = comment.body;
+  textarea.required = true;
+
+  const actions = document.createElement("div");
+  actions.className = "comment-actions";
+
+  const cancel = document.createElement("button");
+  cancel.className = "comment-button secondary";
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => {
+    renderReviewerCommentDisplay(card, comment);
+  });
+
+  const save = document.createElement("button");
+  save.className = "comment-button primary";
+  save.type = "submit";
+  save.textContent = "Save";
+
+  actions.append(cancel, save);
+  form.append(textarea, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const body = textarea.value.trim();
+    if (body.length === 0) {
+      textarea.focus();
+      return;
+    }
+
+    postNative({ type: "update-comment", id: comment.id, body });
+  });
+
+  card.append(form);
+  textarea.focus();
+  textarea.select();
+}
+
+function renderReviewerCommentDeleteConfirm(card: HTMLElement, comment: ReviewerComment) {
+  card.replaceChildren();
+
+  const message = document.createElement("p");
+  message.className = "review-comment-body";
+  message.textContent = "Delete this comment?";
+
+  const actions = document.createElement("div");
+  actions.className = "comment-actions";
+  actions.append(
+    commentActionButton("Cancel", () => renderReviewerCommentDisplay(card, comment)),
+    commentActionButton("Delete", () => postNative({ type: "delete-comment", id: comment.id }), "danger"),
+  );
+
+  card.append(message, actions);
+}
+
+function commentActionButton(label: string, action: () => void, tone: "default" | "danger" = "default") {
+  const button = document.createElement("button");
+  button.className = `comment-button secondary ${tone}`;
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", action);
+
+  return button;
+}
+
+function reviewerCommentPlacementLabel(status: ReviewerCommentPlacementStatus) {
+  switch (status) {
+    case "mapped":
+      return "Mapped";
+    case "unmapped":
+      return "Unmapped";
+    case "stale":
+      return "Stale";
+  }
+}
+
 function positionCopyMenu(menu: HTMLElement, anchor: HTMLElement) {
   const rect = anchor.getBoundingClientRect();
   const margin = 8;
@@ -814,6 +1244,116 @@ function closeCopyMenu() {
   copyMenu = null;
   document.removeEventListener("pointerdown", onCopyMenuOutsidePointer, true);
   document.removeEventListener("keydown", onCopyMenuKeydown, true);
+}
+
+function openCommentComposer(anchor: HTMLElement, context: CommentDraftContext) {
+  closeCommentComposer();
+
+  const form = document.createElement("form");
+  form.className = "comment-composer";
+  form.setAttribute("aria-label", "Add comment");
+
+  const header = document.createElement("div");
+  header.className = "comment-composer-header";
+
+  const title = document.createElement("strong");
+  title.className = "comment-composer-title";
+  title.textContent = "Add comment";
+
+  const reference = document.createElement("span");
+  reference.className = "comment-reference";
+  reference.textContent = context.reference;
+  reference.title = context.reference;
+
+  header.append(title, reference);
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "comment-textarea";
+  textarea.name = "body";
+  textarea.rows = 4;
+  textarea.placeholder = "Write a note for the agent";
+  textarea.required = true;
+
+  const actions = document.createElement("div");
+  actions.className = "comment-actions";
+
+  const cancel = document.createElement("button");
+  cancel.className = "comment-button secondary";
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => {
+    closeCommentComposer();
+  });
+
+  const submit = document.createElement("button");
+  submit.className = "comment-button primary";
+  submit.type = "submit";
+  submit.textContent = "Add";
+
+  actions.append(cancel, submit);
+  form.append(header, textarea, actions);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+
+    const body = textarea.value.trim();
+    if (body.length === 0) {
+      textarea.focus();
+      return;
+    }
+
+    postNative({
+      type: "create-comment",
+      body,
+      reference: context.reference,
+      selection: reviewerCommentSelectionFromRange(context.fileDiff, context.range),
+      snippet: context.snippet,
+    });
+    closeCommentComposer();
+  });
+
+  document.body.append(form);
+  commentComposer = form;
+  positionCopyMenu(form, anchor);
+  window.setTimeout(() => textarea.focus(), 0);
+  document.addEventListener("pointerdown", onCommentComposerOutsidePointer, true);
+  document.addEventListener("keydown", onCommentComposerKeydown, true);
+}
+
+function reviewerCommentSelectionFromRange(fileDiff: FileDiffMetadata, range: SelectedLineRange): ReviewerCommentSelection {
+  return {
+    file: firstNormalizedDiffPath(fileDiff.name) ?? fileDiff.name,
+    oldFile: firstNormalizedDiffPath(fileDiff.prevName),
+    side: range.side ?? "additions",
+    startLine: range.start,
+    endLine: range.end,
+    endSide: range.endSide,
+  };
+}
+
+function closeCommentComposer() {
+  if (!commentComposer) {
+    return;
+  }
+
+  commentComposer.remove();
+  commentComposer = null;
+  document.removeEventListener("pointerdown", onCommentComposerOutsidePointer, true);
+  document.removeEventListener("keydown", onCommentComposerKeydown, true);
+}
+
+function onCommentComposerOutsidePointer(event: PointerEvent) {
+  const target = event.target as Node;
+
+  if (commentComposer && !commentComposer.contains(target)) {
+    closeCommentComposer();
+  }
+}
+
+function onCommentComposerKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape") {
+    closeCommentComposer();
+  }
 }
 
 function onCopyMenuOutsidePointer(event: PointerEvent) {
@@ -876,6 +1416,7 @@ function clearOtherDiffSelections(activeView: RenderedView) {
 function clearDiffSelectionState() {
   activeDiffSelection = null;
   closeCopyMenu();
+  closeCommentComposer();
 }
 
 function emptyState(message: string) {
@@ -983,6 +1524,10 @@ function normalizedDiffPath(path: string | undefined) {
   }
 
   return [path, path.replace(/^[ab]\//, "")];
+}
+
+function firstNormalizedDiffPath(path: string | undefined) {
+  return normalizedDiffPath(path).at(-1);
 }
 
 function fileForPath(path: string) {
@@ -1439,6 +1984,12 @@ window.Differ = {
     setSidebarWidthPoints(preferences.sidebarWidthPoints, false);
     setTheme(preferences.theme, false);
     applyHiddenAllChangesPaths(preferences.hiddenAllChangesPaths ?? []);
+  },
+  applyComments(comments) {
+    reviewerCommentsDocument = comments;
+    if (hasNativeSnapshot) {
+      renderDiff(currentDiffFiles);
+    }
   },
 };
 
