@@ -126,19 +126,26 @@ struct DifferWebView: NSViewRepresentable {
                 appState.$uiZoomPercent,
                 appState.$sidebarWidthPoints
             )
-                .combineLatest(Publishers.CombineLatest(appState.$themeName, appState.$hiddenAllChangesPaths))
+                .combineLatest(
+                    Publishers.CombineLatest3(
+                        appState.$themeName,
+                        appState.$fontFamilyName,
+                        appState.$hiddenAllChangesPaths
+                    )
+                )
                 // @Published emits in willSet, so re-reading appState here returns
                 // the *previous* values. Use the values Combine emits instead, which
                 // are the new ones — otherwise the echo reverts the web's optimistic
                 // update (the "one change behind" bug).
                 .sink { [weak self] values in
-                    let ((interval, autoRefresh, zoom, sidebarWidth), (theme, hiddenAllChangesPaths)) = values
+                    let ((interval, autoRefresh, zoom, sidebarWidth), (theme, fontFamily, hiddenAllChangesPaths)) = values
                     self?.sendPreferences(
                         refreshIntervalMilliseconds: interval,
                         autoRefreshEnabled: autoRefresh,
                         uiZoomPercent: zoom,
                         sidebarWidthPoints: sidebarWidth,
                         theme: theme,
+                        fontFamily: fontFamily,
                         hiddenAllChangesPaths: hiddenAllChangesPaths
                     )
                 }
@@ -209,6 +216,13 @@ struct DifferWebView: NSViewRepresentable {
                 }
 
                 appState.setTheme(theme)
+
+            case "set-font-family":
+                guard let fontFamily = message["fontFamily"] as? String else {
+                    return
+                }
+
+                appState.setFontFamily(fontFamily)
 
             case "set-all-changes-path-hidden":
                 guard let path = message["path"] as? String,
@@ -428,6 +442,7 @@ struct DifferWebView: NSViewRepresentable {
                 uiZoomPercent: appState.uiZoomPercent,
                 sidebarWidthPoints: appState.sidebarWidthPoints,
                 theme: appState.themeName,
+                fontFamily: appState.fontFamilyName,
                 hiddenAllChangesPaths: appState.hiddenAllChangesPaths
             )
         }
@@ -438,6 +453,7 @@ struct DifferWebView: NSViewRepresentable {
             uiZoomPercent: Int,
             sidebarWidthPoints: Int,
             theme: String,
+            fontFamily: String?,
             hiddenAllChangesPaths: [String]
         ) {
             guard isWebReady else {
@@ -453,6 +469,8 @@ struct DifferWebView: NSViewRepresentable {
                         uiZoomPercent: uiZoomPercent,
                         sidebarWidthPoints: sidebarWidthPoints,
                         theme: theme,
+                        fontFamily: fontFamily,
+                        availableFontFamilies: appState.availableFontFamilies,
                         hiddenAllChangesPaths: hiddenAllChangesPaths
                     ),
                 ]
@@ -501,6 +519,8 @@ private struct WebPreferences: Encodable {
     let uiZoomPercent: Int
     let sidebarWidthPoints: Int
     let theme: String
+    let fontFamily: String?
+    let availableFontFamilies: [String]
     let hiddenAllChangesPaths: [String]
 }
 

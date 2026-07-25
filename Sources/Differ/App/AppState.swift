@@ -21,17 +21,27 @@ final class AppState: ObservableObject {
     @Published private(set) var uiZoomPercent: Int
     @Published private(set) var sidebarWidthPoints: Int
     @Published private(set) var themeName: String
+    @Published private(set) var fontFamilyName: String?
     @Published private(set) var hiddenAllChangesPaths = [String]()
     @Published private(set) var reviewerCommentsDocument: ReviewerCommentsDocument?
 
+    let availableFontFamilies: [String]
+
     private let defaults: UserDefaults
+    private let sharedDefaults: UserDefaults
     private let reviewerCommentStore: ReviewerCommentStore
     private var snapshotFingerprint: String?
     private var isRefreshing = false
 
-    init(defaults: UserDefaults = .standard, reviewerCommentStore: ReviewerCommentStore = ReviewerCommentStore()) {
+    init(
+        defaults: UserDefaults = .standard,
+        sharedDefaults: UserDefaults = FontCatalog.sharedDefaults,
+        reviewerCommentStore: ReviewerCommentStore = ReviewerCommentStore()
+    ) {
         self.defaults = defaults
+        self.sharedDefaults = sharedDefaults
         self.reviewerCommentStore = reviewerCommentStore
+        self.availableFontFamilies = FontCatalog.availableMonospacedFamilies()
 
         if let path = defaults.string(forKey: DefaultsKey.selectedRepositoryPath), path.isEmpty == false {
             self.selectedRepositoryURL = URL(fileURLWithPath: path, isDirectory: true)
@@ -48,6 +58,9 @@ final class AppState: ObservableObject {
 
         let storedTheme = defaults.string(forKey: DefaultsKey.themeName)
         self.themeName = (storedTheme?.isEmpty == false) ? storedTheme! : Self.defaultThemeName
+
+        let storedFontFamily = sharedDefaults.string(forKey: SharedDefaultsKey.fontFamilyName)
+        self.fontFamilyName = availableFontFamilies.contains(storedFontFamily ?? "") ? storedFontFamily : nil
 
         self.hiddenAllChangesPaths = storedHiddenAllChangesPaths(for: selectedRepositoryURL)
         loadReviewerCommentsForSelectedRepository()
@@ -171,6 +184,23 @@ final class AppState: ObservableObject {
 
         themeName = trimmed
         defaults.set(trimmed, forKey: DefaultsKey.themeName)
+    }
+
+    func setFontFamily(_ name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let nextName = (trimmed?.isEmpty == false) ? trimmed : nil
+
+        if let nextName, availableFontFamilies.contains(nextName) == false {
+            return
+        }
+
+        fontFamilyName = nextName
+
+        if let nextName {
+            sharedDefaults.set(nextName, forKey: SharedDefaultsKey.fontFamilyName)
+        } else {
+            sharedDefaults.removeObject(forKey: SharedDefaultsKey.fontFamilyName)
+        }
     }
 
     func setAllChangesPathHidden(path: String, hidden: Bool) {
@@ -568,6 +598,10 @@ private enum DefaultsKey {
     static let sidebarWidthPoints = "sidebarWidthPoints"
     static let themeName = "themeName"
     static let hiddenAllChangesPathsByRepository = "hiddenAllChangesPathsByRepository"
+}
+
+private enum SharedDefaultsKey {
+    static let fontFamilyName = "fontFamilyName"
 }
 
 struct SelectedPatch: Equatable, Identifiable {

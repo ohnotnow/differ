@@ -23,6 +23,7 @@
   --sidebar-width-base: 300px;
   --resizer-size: 0.5rem;
   --diffs-font-size: var(--code-font-size);
+  --diffs-font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
   --diffs-line-height: var(--code-line-height);
   --trees-font-size-override: var(--ui-font-size);
   --trees-item-height: var(--tree-row-height);
@@ -307,6 +308,7 @@ h1 {
 }
 
 .interval-control,
+.font-control,
 .zoom-control,
 .theme-control {
   display: flex;
@@ -372,12 +374,29 @@ select {
   height: calc(15px * var(--ui-scale));
 }
 
+.font-control-icon {
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-family: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 800;
+  letter-spacing: -0.08em;
+}
+
+.font-select {
+  width: calc(150px * var(--ui-scale));
+  max-width: 24vw;
+  text-overflow: ellipsis;
+}
+
 .zoom-select {
   min-width: calc(78px * var(--ui-scale));
   font-weight: 700;
 }
 
 .button:hover,
+.font-select:hover,
 .zoom-select:hover {
   border-color: rgba(118, 166, 184, 0.6);
   background: #2e343d;

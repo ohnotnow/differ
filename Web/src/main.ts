@@ -10,6 +10,7 @@ import {
   type SelectionSide,
 } from "@pierre/diffs";
 import { FileTree, themeToTreeStyles, type GitStatusEntry, type TreeThemeStyles } from "@pierre/trees";
+import { applyDiffFontFamily, normalizedFontFamilies } from "./fontPreferences";
 import { formatDiffSelection, type DiffSelectionCopyMode } from "./selectionCopy";
 import "./styles.css";
 
@@ -37,6 +38,8 @@ type DifferPreferences = {
   uiZoomPercent: number;
   sidebarWidthPoints: number;
   theme: string;
+  fontFamily?: string;
+  availableFontFamilies?: string[];
   hiddenAllChangesPaths?: string[];
 };
 
@@ -95,6 +98,7 @@ type NativeMessage =
   | { type: "set-ui-zoom"; percent: number }
   | { type: "set-sidebar-width"; points: number }
   | { type: "set-theme"; theme: string }
+  | { type: "set-font-family"; fontFamily: string }
   | { type: "set-all-changes-path-hidden"; path: string; hidden: boolean }
   | { type: "copy-to-clipboard"; text: string }
   | {
@@ -164,6 +168,7 @@ const autoRefresh = mustFind<HTMLButtonElement>("#auto-refresh");
 const refreshInterval = mustFind<HTMLSelectElement>("#refresh-interval");
 const treeHost = mustFind<HTMLElement>("#tree-host");
 const zoomSelect = mustFind<HTMLSelectElement>("#zoom-select");
+const fontSelect = mustFind<HTMLSelectElement>("#font-select");
 const themeButton = mustFind<HTMLButtonElement>("#theme-button");
 const themeMenu = mustFind<HTMLElement>("#theme-menu");
 const themeMenuItems = Array.from(themeMenu.querySelectorAll<HTMLButtonElement>(".theme-menu-item"));
@@ -217,13 +222,15 @@ let renderedViews: RenderedView[] = [];
 let uiZoomPercent = defaultZoomPercent;
 let sidebarWidthPoints = defaultSidebarWidthPoints;
 let currentTheme = defaultTheme;
+let availableFontFamilies: string[] = [];
+let currentFontFamily = "";
 const treeStylesCache = new Map<string, TreeThemeStyles>();
 let autoRefreshEnabled = true;
 let hiddenAllChangesPaths = new Set<string>();
 let reviewerCommentsDocument: ReviewerCommentsDocument | null = null;
 let reportedCommentPlacementSignature: string | null = null;
 let pendingAutoRefreshEnabled: boolean | null = null;
-let zoomReflowFrame: number | null = null;
+let typographyReflowFrame: number | null = null;
 let activeDiffSelection: ActiveDiffSelection | null = null;
 let copyMenu: HTMLElement | null = null;
 let commentComposer: HTMLElement | null = null;
@@ -1638,7 +1645,7 @@ function setUiZoomPercent(percent: number, notifyNative = true) {
   zoomSelect.value = `${nextZoomPercent}`;
 
   if (didChange) {
-    scheduleZoomReflow();
+    scheduleTypographyReflow();
   }
 
   if (notifyNative) {
@@ -1646,15 +1653,15 @@ function setUiZoomPercent(percent: number, notifyNative = true) {
   }
 }
 
-function scheduleZoomReflow() {
-  if (zoomReflowFrame !== null) {
-    window.cancelAnimationFrame(zoomReflowFrame);
+function scheduleTypographyReflow() {
+  if (typographyReflowFrame !== null) {
+    window.cancelAnimationFrame(typographyReflowFrame);
   }
 
   const scrollProgress = diffScrollProgress();
-  zoomReflowFrame = window.requestAnimationFrame(() => {
-    zoomReflowFrame = null;
-    rebuildTreeForZoom();
+  typographyReflowFrame = window.requestAnimationFrame(() => {
+    typographyReflowFrame = null;
+    rebuildTreeForTypography();
     renderDiff(currentDiffFiles);
 
     window.requestAnimationFrame(() => {
@@ -1663,7 +1670,43 @@ function scheduleZoomReflow() {
   });
 }
 
-function rebuildTreeForZoom() {
+function applyAvailableFontFamilies(fontFamilies: string[]) {
+  availableFontFamilies = normalizedFontFamilies(fontFamilies);
+  fontSelect.replaceChildren();
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "System Mono";
+  fontSelect.append(defaultOption);
+
+  for (const fontFamily of availableFontFamilies) {
+    const option = document.createElement("option");
+    option.value = fontFamily;
+    option.textContent = fontFamily;
+    option.style.fontFamily = fontFamily;
+    fontSelect.append(option);
+  }
+}
+
+function setFontFamily(fontFamily: string, notifyNative = true) {
+  const nextFontFamily = availableFontFamilies.includes(fontFamily) ? fontFamily : "";
+  const didChange = nextFontFamily !== currentFontFamily;
+
+  currentFontFamily = nextFontFamily;
+  fontSelect.value = nextFontFamily;
+
+  applyDiffFontFamily(document.documentElement.style, nextFontFamily);
+
+  if (didChange) {
+    scheduleTypographyReflow();
+  }
+
+  if (notifyNative && didChange) {
+    postNative({ type: "set-font-family", fontFamily: nextFontFamily });
+  }
+}
+
+function rebuildTreeForTypography() {
   if (!tree) {
     return;
   }
@@ -1870,6 +1913,10 @@ zoomSelect.addEventListener("input", () => {
   setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
 });
 
+fontSelect.addEventListener("change", () => {
+  setFontFamily(fontSelect.value);
+});
+
 zoomSelect.addEventListener("change", () => {
   setUiZoomPercent(Number.parseInt(zoomSelect.value, 10));
 });
@@ -1983,6 +2030,8 @@ window.Differ = {
     setUiZoomPercent(preferences.uiZoomPercent, false);
     setSidebarWidthPoints(preferences.sidebarWidthPoints, false);
     setTheme(preferences.theme, false);
+    applyAvailableFontFamilies(preferences.availableFontFamilies ?? []);
+    setFontFamily(preferences.fontFamily ?? "", false);
     applyHiddenAllChangesPaths(preferences.hiddenAllChangesPaths ?? []);
   },
   applyComments(comments) {
@@ -1997,5 +2046,7 @@ setAutoRefreshEnabled(true, false);
 setUiZoomPercent(defaultZoomPercent, false);
 setSidebarWidthPoints(defaultSidebarWidthPoints, false);
 setTheme(defaultTheme, false);
+applyAvailableFontFamilies([]);
+setFontFamily("", false);
 render();
 postNative({ type: "web-ready" });
