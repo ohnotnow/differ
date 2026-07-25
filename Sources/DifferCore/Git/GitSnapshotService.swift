@@ -31,7 +31,7 @@ public struct GitSnapshotService: Sendable {
             ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
             in: rootURL
         )
-        let files = try filesWithContentPreviews(try statusParser.parse(statusData), in: rootURL)
+        let files = try filesWithMetadata(try statusParser.parse(statusData), in: rootURL)
         let patch = try patch(for: .all, files: files, excludingPaths: excludedPaths, in: rootURL)
 
         return GitSnapshot(
@@ -48,17 +48,17 @@ public struct GitSnapshotService: Sendable {
             ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
             in: rootURL
         )
-        let files = try filesWithContentPreviews(try statusParser.parse(statusData), in: rootURL)
+        let files = try filesWithMetadata(try statusParser.parse(statusData), in: rootURL)
 
         return try patch(for: selection, files: files, in: rootURL)
     }
 
-    private func filesWithContentPreviews(_ files: [ChangedFile], in rootURL: URL) throws -> [ChangedFile] {
+    private func filesWithMetadata(_ files: [ChangedFile], in rootURL: URL) throws -> [ChangedFile] {
         try files.map { file in
-            guard file.status == .untracked,
-                  let contents = try previewContents(for: file.path, in: rootURL)
-            else {
-                return file
+            let contents = if file.status == .untracked {
+                try previewContents(for: file.path, in: rootURL)
+            } else {
+                file.contents
             }
 
             return ChangedFile(
@@ -67,9 +67,16 @@ public struct GitSnapshotService: Sendable {
                 status: file.status,
                 indexStatus: file.indexStatus,
                 workTreeStatus: file.workTreeStatus,
-                contents: contents
+                contents: contents,
+                modificationDate: modificationDate(for: file.path, in: rootURL)
             )
         }
+    }
+
+    private func modificationDate(for relativePath: String, in rootURL: URL) -> Date? {
+        let fileURL = rootURL.appending(path: relativePath)
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        return attributes?[.modificationDate] as? Date
     }
 
     private func previewContents(for relativePath: String, in rootURL: URL) throws -> String? {

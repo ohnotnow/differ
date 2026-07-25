@@ -7,6 +7,7 @@ public struct ChangedFile: Codable, Equatable, Identifiable, Sendable {
     public let indexStatus: String
     public let workTreeStatus: String
     public let contents: String?
+    public let modificationDate: Date?
 
     public var id: String {
         oldPath.map { "\($0)->\(path)" } ?? path
@@ -18,7 +19,8 @@ public struct ChangedFile: Codable, Equatable, Identifiable, Sendable {
         status: GitFileStatus,
         indexStatus: String,
         workTreeStatus: String,
-        contents: String? = nil
+        contents: String? = nil,
+        modificationDate: Date? = nil
     ) {
         self.path = path
         self.oldPath = oldPath
@@ -26,6 +28,7 @@ public struct ChangedFile: Codable, Equatable, Identifiable, Sendable {
         self.indexStatus = indexStatus
         self.workTreeStatus = workTreeStatus
         self.contents = contents
+        self.modificationDate = modificationDate
     }
 }
 

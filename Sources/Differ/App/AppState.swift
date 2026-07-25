@@ -435,7 +435,10 @@ final class AppState: ObservableObject {
 
     private func fingerprint(for snapshot: GitSnapshot) -> String {
         let files = snapshot.files
-            .map { "\($0.path)|\($0.oldPath ?? "")|\($0.status.rawValue)|\($0.indexStatus)|\($0.workTreeStatus)" }
+            .map {
+                let modificationTime = $0.modificationDate?.timeIntervalSince1970.description ?? ""
+                return "\($0.path)|\($0.oldPath ?? "")|\($0.status.rawValue)|\($0.indexStatus)|\($0.workTreeStatus)|\(modificationTime)"
+            }
             .joined(separator: "\n")
 
         return files + "\n---patch---\n" + snapshot.allPatch

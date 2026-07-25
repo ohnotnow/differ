@@ -21,19 +21,17 @@ struct GitSnapshotServiceTests {
         let snapshot = try GitSnapshotService().snapshot(for: rootURL)
 
         #expect(snapshot.repositoryPath.hasSuffix(rootURL.lastPathComponent))
-        #expect(snapshot.files.contains(
-            ChangedFile(
-                path: "Tracked.txt",
-                status: .modified,
-                indexStatus: " ",
-                workTreeStatus: "M"
-            )
-        ))
+        let trackedFile = try #require(snapshot.files.first { $0.path == "Tracked.txt" })
+        #expect(trackedFile.status == .modified)
+        #expect(trackedFile.indexStatus == " ")
+        #expect(trackedFile.workTreeStatus == "M")
+        #expect(trackedFile.modificationDate != nil)
         let untrackedFile = try #require(snapshot.files.first { $0.path == "Untracked.txt" })
         #expect(untrackedFile.status == .untracked)
         #expect(untrackedFile.indexStatus == "?")
         #expect(untrackedFile.workTreeStatus == "?")
         #expect(untrackedFile.contents == "new\n")
+        #expect(untrackedFile.modificationDate != nil)
         #expect(snapshot.allPatch.contains("diff --git a/Tracked.txt b/Tracked.txt"))
         #expect(snapshot.allPatch.contains("+two"))
         #expect(snapshot.allPatch.contains("diff --git a/Untracked.txt b/Untracked.txt"))
@@ -51,20 +49,36 @@ struct GitSnapshotServiceTests {
         let service = GitSnapshotService()
         let snapshot = try service.snapshot(for: rootURL)
 
-        #expect(snapshot.files.contains(
-            ChangedFile(
-                path: "Staged.txt",
-                status: .added,
-                indexStatus: "A",
-                workTreeStatus: " "
-            )
-        ))
+        let stagedFile = try #require(snapshot.files.first { $0.path == "Staged.txt" })
+        #expect(stagedFile.status == .added)
+        #expect(stagedFile.indexStatus == "A")
+        #expect(stagedFile.workTreeStatus == " ")
+        #expect(stagedFile.modificationDate != nil)
         #expect(snapshot.files.contains { $0.path == "Untracked.txt" && $0.status == .untracked })
         #expect(snapshot.allPatch.contains("diff --git a/Staged.txt b/Staged.txt"))
         #expect(snapshot.allPatch.contains("diff --git a/Untracked.txt b/Untracked.txt"))
 
-        let stagedFile = try #require(snapshot.files.first { $0.path == "Staged.txt" })
         #expect(try service.patch(for: .file(stagedFile), in: rootURL).contains("+staged"))
+    }
+
+    @Test("reports no modification date for a deleted file")
+    func reportsNoModificationDateForDeletedFile() throws {
+        let rootURL = try temporaryDirectory()
+        try runGit(["init"], in: rootURL)
+        try runGit(["config", "user.name", "Differ Tests"], in: rootURL)
+        try runGit(["config", "user.email", "differ@example.test"], in: rootURL)
+
+        let deletedURL = rootURL.appending(path: "Deleted.txt")
+        try "gone soon\n".write(to: deletedURL, atomically: true, encoding: .utf8)
+        try runGit(["add", "Deleted.txt"], in: rootURL)
+        try runGit(["commit", "-m", "Initial commit"], in: rootURL)
+        try FileManager.default.removeItem(at: deletedURL)
+
+        let snapshot = try GitSnapshotService().snapshot(for: rootURL)
+        let deletedFile = try #require(snapshot.files.first { $0.path == "Deleted.txt" })
+
+        #expect(deletedFile.status == .deleted)
+        #expect(deletedFile.modificationDate == nil)
     }
 
     @Test("omits oversized untracked content from preview patches")

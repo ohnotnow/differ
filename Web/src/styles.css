@@ -251,6 +251,12 @@ select {
   color: #211b0b;
 }
 
+.status-badge.recent {
+  background: var(--accent);
+  color: #101418;
+  font-size: calc(14px * var(--ui-scale));
+}
+
 .status-badge.deleted {
   background: var(--deleted);
 }

@@ -11,6 +11,7 @@ import {
 } from "@pierre/diffs";
 import { FileTree, themeToTreeStyles, type GitStatusEntry, type TreeThemeStyles } from "@pierre/trees";
 import { applyDiffFontFamily, normalizedFontFamilies } from "./fontPreferences";
+import { filesMostRecentlyModifiedFirst } from "./recentChanges";
 import { formatDiffSelection, type DiffSelectionCopyMode } from "./selectionCopy";
 import "./styles.css";
 
@@ -23,7 +24,10 @@ type ChangedFile = {
   indexStatus?: string;
   workTreeStatus?: string;
   contents?: string;
+  modificationDate?: string;
 };
+
+type AggregateView = "all" | "recent";
 
 type DifferSnapshot = {
   repositoryPath: string;
@@ -208,6 +212,7 @@ const emptySnapshot: DifferSnapshot = {
 let snapshot = emptySnapshot;
 let hasNativeSnapshot = false;
 let selectedPath: string | null = null;
+let aggregateView: AggregateView = "all";
 let allDiffFiles: FileDiffMetadata[] = [];
 let currentDiffFiles = allDiffFiles;
 
@@ -242,7 +247,9 @@ function render() {
         hiddenCount > 0 ? `, ${hiddenCount} hidden` : ""
       }`
     : "Waiting";
-  selectionTitle.textContent = hasNativeSnapshot ? selectedPath ?? "All changes" : "Waiting for repository snapshot";
+  selectionTitle.textContent = hasNativeSnapshot
+    ? selectedPath ?? (aggregateView === "recent" ? "Recent changes" : "All changes")
+    : "Waiting for repository snapshot";
 
   renderFallbackFiles();
   renderTree();
@@ -259,7 +266,7 @@ function renderFallbackFiles() {
   const needsStructureSync = renderedFileListKey !== nextFileListKey;
 
   if (needsStructureSync) {
-    const retainedKeys = new Set(["__all__", ...snapshot.files.map((file) => file.path)]);
+    const retainedKeys = new Set(["__all__", "__recent__", ...snapshot.files.map((file) => file.path)]);
 
     for (const [key, button] of fileRowCache) {
       if (!retainedKeys.has(key)) {
@@ -271,7 +278,16 @@ function renderFallbackFiles() {
 
   if (needsStructureSync) {
     const fragment = document.createDocumentFragment();
-    fragment.append(buttonForFileRow("__all__", { path: "All changes", status: "mixed" }, selectedPath === null));
+    fragment.append(
+      buttonForFileRow("__all__", { path: "All changes", status: "mixed" }, selectedPath === null && aggregateView === "all"),
+    );
+    fragment.append(
+      buttonForFileRow(
+        "__recent__",
+        { path: "Recent changes", status: "mixed" },
+        selectedPath === null && aggregateView === "recent",
+      ),
+    );
 
     for (const file of snapshot.files) {
       fragment.append(buttonForFileRow(file.path, file, selectedPath === file.path));
@@ -286,7 +302,22 @@ function renderFallbackFiles() {
 
   const allChangesRow = fileRowCache.get("__all__");
   if (allChangesRow) {
-    updateFileRow(allChangesRow, { path: "All changes", status: "mixed" }, selectedPath === null, false);
+    updateFileRow(
+      allChangesRow,
+      { path: "All changes", status: "mixed" },
+      selectedPath === null && aggregateView === "all",
+      false,
+    );
+  }
+
+  const recentChangesRow = fileRowCache.get("__recent__");
+  if (recentChangesRow) {
+    updateFileRow(
+      recentChangesRow,
+      { path: "Recent changes", status: "mixed" },
+      selectedPath === null && aggregateView === "recent",
+      false,
+    );
   }
 
   for (const file of snapshot.files) {
@@ -320,12 +351,17 @@ function buttonForFileRow(key: string, file: Pick<ChangedFile, "path" | "status"
         return;
       }
 
+      if (key === "__recent__") {
+        selectRecentChanges();
+        return;
+      }
+
       selectPath(key);
-    }, key === "__all__" ? null : () => toggleAllChangesPathHidden(key));
+    }, key === "__all__" || key === "__recent__" ? null : () => toggleAllChangesPathHidden(key));
     fileRowCache.set(key, row);
   }
 
-  updateFileRow(row, file, selected, key !== "__all__" && isHiddenFromAllChanges(key));
+  updateFileRow(row, file, selected, key !== "__all__" && key !== "__recent__" && isHiddenFromAllChanges(key));
   return row;
 }
 
@@ -373,12 +409,7 @@ function createFileRow(
 
 function updateFileRow(row: HTMLDivElement, file: Pick<ChangedFile, "path" | "status">, selected: boolean, hidden: boolean) {
   const hiddenCount = hiddenChangedFiles().length;
-  const title =
-    file.path === "All changes"
-      ? hiddenCount > 0
-        ? `All changed files, ${hiddenCount} hidden`
-        : "All changed files"
-      : `${statusTitle(file.status)}: ${file.path}`;
+  const title = fileRowTitle(file, hiddenCount);
   const selectButton = row.querySelector<HTMLButtonElement>(".file-row-main");
   const visibilityButton = row.querySelector<HTMLButtonElement>(".file-row-visibility");
   const badge = row.querySelector<HTMLElement>(".status-badge");
@@ -393,10 +424,12 @@ function updateFileRow(row: HTMLDivElement, file: Pick<ChangedFile, "path" | "st
   }
 
   if (badge) {
-    badge.className = `status-badge ${file.status}`;
-    badge.textContent = statusLabel(file.status);
-    badge.title = statusTitle(file.status);
-    badge.setAttribute("aria-label", statusTitle(file.status));
+    const isRecentChanges = file.path === "Recent changes";
+    const badgeTitle = isRecentChanges ? "Most recently modified first" : statusTitle(file.status);
+    badge.className = `status-badge ${isRecentChanges ? "recent" : file.status}`;
+    badge.textContent = isRecentChanges ? "◷" : statusLabel(file.status);
+    badge.title = badgeTitle;
+    badge.setAttribute("aria-label", badgeTitle);
   }
 
   if (path) {
@@ -413,8 +446,23 @@ function updateFileRow(row: HTMLDivElement, file: Pick<ChangedFile, "path" | "st
   }
 }
 
+function fileRowTitle(file: Pick<ChangedFile, "path" | "status">, hiddenCount: number) {
+  if (file.path === "All changes") {
+    return hiddenCount > 0 ? `All changed files, ${hiddenCount} hidden` : "All changed files";
+  }
+
+  if (file.path === "Recent changes") {
+    return hiddenCount > 0
+      ? `Changed files, most recently modified first, ${hiddenCount} hidden`
+      : "Changed files, most recently modified first";
+  }
+
+  return `${statusTitle(file.status)}: ${file.path}`;
+}
+
 function syncFileRowSelection() {
-  fileRowCache.get("__all__")?.classList.toggle("selected", selectedPath === null);
+  fileRowCache.get("__all__")?.classList.toggle("selected", selectedPath === null && aggregateView === "all");
+  fileRowCache.get("__recent__")?.classList.toggle("selected", selectedPath === null && aggregateView === "recent");
 
   for (const file of snapshot.files) {
     const row = fileRowCache.get(file.path);
@@ -425,7 +473,20 @@ function syncFileRowSelection() {
 
 function selectAllChanges(notifyNative = true) {
   selectedPath = null;
+  aggregateView = "all";
   currentDiffFiles = diffFilesForAllChanges();
+
+  if (notifyNative) {
+    postNative({ type: "select-all" });
+  }
+
+  render();
+}
+
+function selectRecentChanges(notifyNative = true) {
+  selectedPath = null;
+  aggregateView = "recent";
+  currentDiffFiles = diffFilesForRecentChanges();
 
   if (notifyNative) {
     postNative({ type: "select-all" });
@@ -466,6 +527,14 @@ function diffFilesForAllChanges() {
   });
 }
 
+function diffFilesForRecentChanges() {
+  return recentlyChangedFiles().flatMap((file) => allDiffFiles.filter((fileDiff) => diffMatchesChangedFile(fileDiff, file)));
+}
+
+function diffFilesForCurrentAggregate() {
+  return aggregateView === "recent" ? diffFilesForRecentChanges() : diffFilesForAllChanges();
+}
+
 function toggleAllChangesPathHidden(path: string) {
   const hidden = !isHiddenFromAllChanges(path);
 
@@ -476,7 +545,7 @@ function toggleAllChangesPathHidden(path: string) {
   }
 
   if (selectedPath === null) {
-    currentDiffFiles = diffFilesForAllChanges();
+    currentDiffFiles = diffFilesForCurrentAggregate();
   }
 
   postNative({ type: "set-all-changes-path-hidden", path, hidden });
@@ -487,7 +556,7 @@ function applyHiddenAllChangesPaths(paths: string[], renderNow = true) {
   hiddenAllChangesPaths = normalizedPathSet(paths);
 
   if (selectedPath === null) {
-    currentDiffFiles = diffFilesForAllChanges();
+    currentDiffFiles = diffFilesForCurrentAggregate();
   }
 
   if (renderNow) {
@@ -501,6 +570,10 @@ function hiddenChangedFiles() {
 
 function includedChangedFilesForAllChanges() {
   return snapshot.files.filter((file) => isHiddenFromAllChanges(file.path) === false);
+}
+
+function recentlyChangedFiles() {
+  return filesMostRecentlyModifiedFirst(includedChangedFilesForAllChanges());
 }
 
 function isHiddenFromAllChanges(path: string) {
@@ -1444,7 +1517,11 @@ function cleanRenderedViews() {
 }
 
 function missingDiffFiles(fileDiffs: FileDiffMetadata[]) {
-  const candidates = selectedPath ? snapshot.files.filter((file) => file.path === selectedPath) : includedChangedFilesForAllChanges();
+  const candidates = selectedPath
+    ? snapshot.files.filter((file) => file.path === selectedPath)
+    : aggregateView === "recent"
+      ? recentlyChangedFiles()
+      : includedChangedFilesForAllChanges();
 
   return candidates.filter((file) => !fileDiffs.some((fileDiff) => diffMatchesChangedFile(fileDiff, file)));
 }
@@ -1989,6 +2066,7 @@ window.addEventListener("keydown", (event) => {
 window.Differ = {
   applySnapshot(nextSnapshot) {
     const previousPath = selectedPath;
+    const previousAggregateView = aggregateView;
     const previousFocusedDiff = previousPath ? focusedPatchCache.get(previousPath) : undefined;
 
     focusedPatchCache.clear();
@@ -2005,7 +2083,11 @@ window.Differ = {
 
       selectPath(previousPath, true);
     } else {
-      selectAllChanges(false);
+      if (previousAggregateView === "recent") {
+        selectRecentChanges(false);
+      } else {
+        selectAllChanges(false);
+      }
     }
   },
   applyPatch(path, patch) {
